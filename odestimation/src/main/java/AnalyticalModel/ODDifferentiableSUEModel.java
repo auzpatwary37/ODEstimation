@@ -324,7 +324,7 @@ protected HashMap<Id<Link>,Double> NetworkLoadingCarSingleOD(Id<AnalyticalModelO
 		double u=0;
 		
 		if(counter>1) {
-			u=r.calcRouteUtility(params, anaParams,this.getNetworks().get(timeBeanId),this.timeBeans.get(timeBeanId));
+			u=r.calcRouteUtility(params, anaParams,this.networks.get(timeBeanId),this.timeBeans.get(timeBeanId));
 			u=u+Math.log(odpair.getAutoPathSize().get(r.getRouteId()));//adding the path size term
 			utility.put(r.getRouteId(), u);
 			//oldUtility.put(r.getRouteId(),this.getOdPairs().getODpairset().get(ODpairId).getRouteUtility(timeBeanId).get(r.getRouteId()));
@@ -363,7 +363,7 @@ protected HashMap<Id<Link>,Double> NetworkLoadingCarSingleOD(Id<AnalyticalModelO
 	//This is the route flow split
 	for(AnalyticalModelRoute r:routes){
 		double u=utility.get(r.getRouteId());
-		double demand=this.getCarDemand().get(timeBeanId).get(ODpairId);
+		double demand=this.carDemand.get(timeBeanId).get(ODpairId);
 		String id=null;
 		if(this.odMultiplierId==null) {
 			id=CNLSUEModel.getODtoODMultiplierId(odpair.getODpairId().toString(),timeBeanId);
