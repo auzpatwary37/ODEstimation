@@ -304,15 +304,73 @@ private SUEModelOutput performAssignment( LinkedHashMap<String,Double> params, L
 	return flow;
 }
 
+public void singleTimeBeanTA(LinkedHashMap<String, Double> params,LinkedHashMap<String,Double> anaParams,String timeBeanId) {
+	Map<Id<TransitLink>, Double> linkTransitVolume;
+	Map<Id<Link>,Double> linkCarVolume;
+	boolean shouldStop=false;
+	
+	for(int i=1;i<500;i++) {
+		//for(this.car)
+		//ConcurrentHashMap<String,HashMap<Id<CNLODpair>,Double>>demand=this.Demand;
+		linkCarVolume=this.performCarNetworkLoading(timeBeanId,i,params,anaParams);
+		linkTransitVolume=this.performTransitNetworkLoading(timeBeanId,i,params,anaParams);
+		shouldStop=this.CheckConvergence(linkCarVolume, linkTransitVolume, this.tollerance, timeBeanId,i);
+		this.UpdateLinkVolume(linkCarVolume, linkTransitVolume, i, timeBeanId);
+		if(i==1 && shouldStop==true) {
+			boolean demandEmpty=true;
+			for(AnalyticalModelODpair od:this.getOdPairs().getODpairset().values()) {
+				if(od.getDemand().get(timeBeanId)!=0) {
+					demandEmpty=false;
+					break;
+				}
+			}
+			if(!demandEmpty) {
+				System.out.println("The model cannot converge on first iteration!!!");
+			}
+		}
+		if(shouldStop) {
+			//collect travel time
+			if(this.measurementsToUpdate!=null) {
+				List<Measurement>ms= this.measurementsToUpdate.getMeasurementsByType().get(MeasurementType.linkTravelTime);
+				for(Measurement m:ms) {
+					if(m.getVolumes().containsKey(timeBeanId)) {
+						m.putVolume(timeBeanId, ((CNLLink)this.networks.get(timeBeanId).getLinks().get(((ArrayList<Id<Link>>)m.getAttribute(Measurement.linkListAttributeName)).get(0))).getLinkTravelTime(this.timeBeans.get(timeBeanId),
+						params, anaParams));
+					}
+				}
+			}
+//			//collect travel time for transit
+//			for(TransitLink link:this.transitLinks.get(timeBeanId).values()) {
+//				if(link instanceof TransitDirectLink) {
+//					this.outputTrLinkTT.get(timeBeanId).put(link.getTrLinkId(), 
+//							((TransitDirectLink)link).getLinkTravelTime(this.networks.get(timeBeanId),this.timeBeans.get(timeBeanId),
+//									params, anaParams));
+//				}else {
+//					this.outputTrLinkTT.get(timeBeanId).put(link.getTrLinkId(), 
+//							((TransitTransferLink)link).getWaitingTime(anaParams,this.networks.get(timeBeanId)));
+//				}
+//				
+//			}
+			
+			break;
+			}
+		this.performModalSplit(params, anaParams, timeBeanId);
+		
+	}
+	
+	
+}
+
 protected HashMap<Id<Link>,Double> NetworkLoadingCarSingleOD(Id<AnalyticalModelODpair> ODpairId,String timeBeanId,double counter,LinkedHashMap<String,Double> params, LinkedHashMap<String, Double> anaParams){
 
 	AnalyticalModelODpair odpair=this.odPairs.getODpairset().get(ODpairId);
-	String subpopulation = odpair.getSubPopulation();
+	String subPopulation = odpair.getSubPopulation();
 	
 	List<AnalyticalModelRoute> routes=odpair.getRoutes();
 	HashMap<Id<AnalyticalModelRoute>,Double> routeFlows=new HashMap<>();
 	HashMap<Id<Link>,Double> linkFlows=new HashMap<>();
 	
+	params = this.handleBasicParams(params, subPopulation, this.scenario.getConfig());
 	
 	//double totalUtility=0;
 	
@@ -323,16 +381,9 @@ protected HashMap<Id<Link>,Double> NetworkLoadingCarSingleOD(Id<AnalyticalModelO
 	for(AnalyticalModelRoute r:routes){
 		double u=0;
 		
-		if(counter>1) {
-			u=r.calcRouteUtility(params, anaParams,this.networks.get(timeBeanId),this.timeBeans.get(timeBeanId));
-			u=u+Math.log(odpair.getAutoPathSize().get(r.getRouteId()));//adding the path size term
-			utility.put(r.getRouteId(), u);
-			//oldUtility.put(r.getRouteId(),this.getOdPairs().getODpairset().get(ODpairId).getRouteUtility(timeBeanId).get(r.getRouteId()));
-		}else {
-			u=0;
-			utility.put(r.getRouteId(), u);
-		}
-		//oldUtility.put(r.getRouteId(),this.odPairs.getODpairset().get(ODpairId).getRouteUtility(timeBeanId).get(r.getRouteId()));
+		u=r.calcRouteUtility(params, anaParams,this.networks.get(timeBeanId),this.timeBeans.get(timeBeanId));
+		u=u+Math.log(odpair.getAutoPathSize().get(r.getRouteId()));//adding the path size term
+		utility.put(r.getRouteId(), u);
 		odpair.updateRouteUtility(r.getRouteId(), u,timeBeanId);
 		
 		//This Check is to make sure the exp(utility) do not go to infinity.
