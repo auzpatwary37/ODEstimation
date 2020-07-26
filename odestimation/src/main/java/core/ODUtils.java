@@ -17,9 +17,11 @@ public class ODUtils {
 	public static final String OriginDestinationSubPopMultiplierVariableName = "originDestinationSubPopMultipler";
 	public static final String OriginMultiplierSubPopVaraibleName = "originSubPopMultiplier";
 	public static final String DestinationMultiplierSubPopVaraibleName = "destinationSubPopMultiplier";
+	public static final String originMultiplierTimeSpecificSubPopVariableName = "originSubTimeMultiplier";
+	public static final String destinationMultiplierTimeSpecificSubPopVariableName = "destinationSubTimeMultiplier";
+	public static final String origindestinationMultiplierTimeSpecificSubPopVariableName = "originDestinationSubTimeMultiplier";
 	
-	
-	public static String createODMultiplierVariableName(Id<AnalyticalModelODpair> odPairId,String type) {
+	public static String createODMultiplierVariableName(Id<AnalyticalModelODpair> odPairId,String type, String timeBeanId) {
 		String[] part = odPairId.toString().split("_");
 		String originId = part[0];
 		String destinationId = part[1];
@@ -38,6 +40,12 @@ public class ODUtils {
 			return OriginMultiplierSubPopVaraibleName+"___"+originId+"___"+subPopulation;
 		case DestinationMultiplierSubPopVaraibleName:
 			return DestinationMultiplierSubPopVaraibleName+"___"+destinationId+"___"+subPopulation;
+		case originMultiplierTimeSpecificSubPopVariableName:
+			return originMultiplierTimeSpecificSubPopVariableName+"___"+originId+"___"+subPopulation+"___"+timeBeanId;
+		case destinationMultiplierTimeSpecificSubPopVariableName:
+			return destinationMultiplierTimeSpecificSubPopVariableName+"___"+destinationId+"___"+subPopulation+"___"+timeBeanId;
+		case origindestinationMultiplierTimeSpecificSubPopVariableName:
+			return origindestinationMultiplierTimeSpecificSubPopVariableName+"___"+originId+"___"+destinationId+"___"+subPopulation+"___"+timeBeanId;
 		default:
 			throw new IllegalArgumentException("Input type: "+type+ "not recognized. Please use the static final string keys in the ODUtils class only.");	
 		}
@@ -53,26 +61,34 @@ public class ODUtils {
 			for(Entry<Id<AnalyticalModelODpair>, Double> od: timeDemand.getValue().entrySet()) {
 				Double m = 1.;
 				outTimeDemand.put(od.getKey(), od.getValue());
-				if((m = variables.get(createODMultiplierVariableName(od.getKey(),OriginMultiplierVariableName)))!=null) {
+				if((m = variables.get(createODMultiplierVariableName(od.getKey(),OriginMultiplierVariableName,timeDemand.getKey())))!=null) {
 					outTimeDemand.put(od.getKey(), outTimeDemand.get(od.getKey())*m);
 				}
 				
-				if((m =variables.get(createODMultiplierVariableName(od.getKey(),DestinationMultiplierVariableName)))!=null) {
+				if((m =variables.get(createODMultiplierVariableName(od.getKey(),DestinationMultiplierVariableName,timeDemand.getKey())))!=null) {
 					outTimeDemand.put(od.getKey(), outTimeDemand.get(od.getKey())*m);
 				}
-				if((m =variables.get(createODMultiplierVariableName(od.getKey(),OriginDestinationMultiplierVariableName)))!=null) {
+				if((m =variables.get(createODMultiplierVariableName(od.getKey(),OriginDestinationMultiplierVariableName,timeDemand.getKey())))!=null) {
 					outTimeDemand.put(od.getKey(), outTimeDemand.get(od.getKey())*m);
 				}
-				if((m =variables.get(createODMultiplierVariableName(od.getKey(),OriginDestinationSubPopMultiplierVariableName)))!=null) {
+				if((m =variables.get(createODMultiplierVariableName(od.getKey(),OriginDestinationSubPopMultiplierVariableName,timeDemand.getKey())))!=null) {
 					outTimeDemand.put(od.getKey(), outTimeDemand.get(od.getKey())*m);
 				}
-				if((m =variables.get(createODMultiplierVariableName(od.getKey(),OriginMultiplierSubPopVaraibleName)))!=null) {
+				if((m =variables.get(createODMultiplierVariableName(od.getKey(),OriginMultiplierSubPopVaraibleName,timeDemand.getKey())))!=null) {
 					outTimeDemand.put(od.getKey(), outTimeDemand.get(od.getKey())*m);
 				}
-				if((m =variables.get(createODMultiplierVariableName(od.getKey(),DestinationMultiplierSubPopVaraibleName)))!=null) {
+				if((m =variables.get(createODMultiplierVariableName(od.getKey(),DestinationMultiplierSubPopVaraibleName,timeDemand.getKey())))!=null) {
 					outTimeDemand.put(od.getKey(), outTimeDemand.get(od.getKey())*m);
 				}
-				
+				if((m =variables.get(createODMultiplierVariableName(od.getKey(),originMultiplierTimeSpecificSubPopVariableName,timeDemand.getKey())))!=null) {
+					outTimeDemand.put(od.getKey(), outTimeDemand.get(od.getKey())*m);
+				}
+				if((m =variables.get(createODMultiplierVariableName(od.getKey(),destinationMultiplierTimeSpecificSubPopVariableName,timeDemand.getKey())))!=null) {
+					outTimeDemand.put(od.getKey(), outTimeDemand.get(od.getKey())*m);
+				}
+				if((m =variables.get(createODMultiplierVariableName(od.getKey(),origindestinationMultiplierTimeSpecificSubPopVariableName,timeDemand.getKey())))!=null) {
+					outTimeDemand.put(od.getKey(), outTimeDemand.get(od.getKey())*m);
+				}
 			}
 		}
 		return outDemand;
