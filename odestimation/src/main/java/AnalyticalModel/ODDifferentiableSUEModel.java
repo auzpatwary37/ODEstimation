@@ -1,22 +1,28 @@
 package AnalyticalModel;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.Map.Entry;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 import org.apache.log4j.Logger;
 import org.matsim.api.core.v01.Id;
 import org.matsim.api.core.v01.Scenario;
 import org.matsim.api.core.v01.network.Link;
 import org.matsim.api.core.v01.network.Network;
+import org.matsim.api.core.v01.population.Person;
+import org.matsim.api.core.v01.population.Plan;
 import org.matsim.api.core.v01.population.Population;
 import org.matsim.core.config.Config;
+import org.matsim.core.config.ConfigUtils;
 import org.matsim.core.network.NetworkUtils;
 import org.matsim.core.population.PopulationUtils;
 import org.matsim.core.scoring.functions.ScoringParameters;
@@ -31,6 +37,7 @@ import org.matsim.vehicles.Vehicles;
 
 import core.ODUtils;
 import dynamicTransitRouter.fareCalculators.FareCalculator;
+
 import transitCalculatorsWithFare.FareLink;
 import ust.hk.praisehk.metamodelcalibration.analyticalModel.AnalyticalModelLink;
 import ust.hk.praisehk.metamodelcalibration.analyticalModel.AnalyticalModelNetwork;
@@ -40,12 +47,14 @@ import ust.hk.praisehk.metamodelcalibration.analyticalModel.AnalyticalModelTrans
 import ust.hk.praisehk.metamodelcalibration.analyticalModel.SUEModelOutput;
 import ust.hk.praisehk.metamodelcalibration.analyticalModel.TransitDirectLink;
 import ust.hk.praisehk.metamodelcalibration.analyticalModel.TransitLink;
+import ust.hk.praisehk.metamodelcalibration.analyticalModel.TransitTransferLink;
 import ust.hk.praisehk.metamodelcalibration.analyticalModelImpl.CNLLink;
 import ust.hk.praisehk.metamodelcalibration.analyticalModelImpl.CNLNetwork;
 import ust.hk.praisehk.metamodelcalibration.analyticalModelImpl.CNLODpairs;
 import ust.hk.praisehk.metamodelcalibration.analyticalModelImpl.CNLSUEModel;
+import ust.hk.praisehk.metamodelcalibration.analyticalModelImpl.CNLTransitDirectLink;
 import ust.hk.praisehk.metamodelcalibration.analyticalModelImpl.CNLTransitRoute;
-
+import ust.hk.praisehk.metamodelcalibration.analyticalModelImpl.CNLTransitTransferLink;
 import ust.hk.praisehk.metamodelcalibration.matsimIntegration.SignalFlowReductionGenerator;
 import ust.hk.praisehk.metamodelcalibration.measurements.Measurement;
 import ust.hk.praisehk.metamodelcalibration.measurements.MeasurementType;
@@ -102,7 +111,32 @@ private Map<String,Map<Id<AnalyticalModelODpair>,Double>> expectedMaximumTrUtili
 private Map<String,Map<Id<AnalyticalModelRoute>,Double>> routeProb = new HashMap<>();
 private Map<String,Map<Id<AnalyticalModelTransitRoute>,Double>> trRouteProb = new HashMap<>();
 
+private Map<String,Map<Id<AnalyticalModelRoute>,Double>> routeFlow = new HashMap<>();
+private Map<String,Map<Id<AnalyticalModelTransitRoute>,Double>> trRouteFlow = new HashMap<>();
+
 private Map<String,Map<Id<AnalyticalModelODpair>,Double>> carProbability = new HashMap<>();
+
+//The gradient containers
+//time->id->varKey->grad
+private Map<Id<AnalyticalModelODpair>,List<Id<AnalyticalModelRoute>>> routeODIncidence = new HashMap<>();
+private Map<String,Map<Id<AnalyticalModelODpair>,List<Id<AnalyticalModelTransitRoute>>>> trRouteODIncidence = new HashMap<>();
+private Map<Id<Link>, List<Id<AnalyticalModelRoute>>> linkIncidenceMatrix = new HashMap<>();
+private Map<String,Map<Id<TransitLink>, List<Id<AnalyticalModelTransitRoute>>>> trLinkIncidenceMatrix = new HashMap<>();
+private Map<String,Map<String,List<Id<AnalyticalModelTransitRoute>>>> fareLinkincidenceMatrix = new HashMap<>();
+private Set<String> gradientKeys;
+private Map<String,Map<Id<Link>,Map<String,Double>>> linkGradient = new HashMap<>();
+private Map<String,Map<Id<Link>,Map<String,Double>>> linkTTGradient = new HashMap<>();
+
+private Map<String,Map<Id<TransitLink>,Map<String,Double>>> trLinkGradient = new HashMap<>();
+private Map<String,Map<Id<TransitLink>,Map<String,Double>>> trLinkTTGradient = new HashMap<>();
+
+private Map<String,Map<Id<AnalyticalModelRoute>,Map<String,Double>>> routeFlowGradient = new HashMap<>();
+private Map<String,Map<Id<AnalyticalModelTransitRoute>,Map<String,Double>>> trRouteFlowGradient = new HashMap<>();
+
+private Map<String,Map<String,Map<String,Double>>> fareLinkGradient = new HashMap<>();
+
+
+
 
 
 //This are needed for output generation 
@@ -120,6 +154,7 @@ protected Map<String,Map<String,Double>>MTRCount=new ConcurrentHashMap<>();
 private boolean emptyMeasurements;
 
 private Measurements measurementsToUpdate;
+
 
 
 
@@ -150,6 +185,36 @@ protected void loadAnalyticalModelInternalPamamsLimit() {
 	this.AnalyticalModelParamsLimit.put(CNLSUEModel.TransferalphaName, new Tuple<Double,Double>(0.25,5.));
 	this.AnalyticalModelParamsLimit.put(CNLSUEModel.TransferbetaName, new Tuple<Double,Double>(0.75,4.));
 	
+}
+
+public ODDifferentiableSUEModel(Map<String, Tuple<Double, Double>> timeBean,Config config) {
+	this.timeBeans=timeBean;
+	//this.defaultParameterInitiation(null);
+	for(String timeId:this.timeBeans.keySet()) {
+		this.transitLinks.put(timeId, new HashMap<Id<TransitLink>, TransitLink>());
+	
+		
+		this.carDemand.put(timeId, new HashMap<Id<AnalyticalModelODpair>, Double>());
+		this.carProbability.put(timeId, new ConcurrentHashMap<>());
+		this.routeUtilities.put(timeId,new ConcurrentHashMap<>());
+		this.trRouteUtilities.put(timeId, new ConcurrentHashMap<>());
+		this.routeFlow.put(timeId, new ConcurrentHashMap<>());
+		this.trRouteFlow.put(timeId, new ConcurrentHashMap<>());
+		this.routeProb.put(timeId, new ConcurrentHashMap<>());
+		this.trRouteProb.put(timeId, new ConcurrentHashMap<>());
+		this.expectedMaximumCarUtility.put(timeId, new ConcurrentHashMap<>());
+		this.expectedMaximumTrUtility.put(timeId, new ConcurrentHashMap<>());
+		
+		
+		//For result recording
+		outputLinkTT.put(timeId, new HashMap<>());
+		outputTrLinkTT.put(timeId, new HashMap<>());
+		this.totalPtCapacityOnLink.put(timeId, new HashMap<>());
+		this.MTRCount.put(timeId, new ConcurrentHashMap<>());
+	}
+	if(config==null) config = ConfigUtils.createConfig();
+	this.defaultParameterInitiation(config);
+	logger.info("Model created.");
 }
 
 /**
@@ -233,7 +298,61 @@ public void generateRoutesAndOD(Population population,Network network,TransitSch
 	}
 	System.out.println("Demand total = "+agentDemand);
 	System.out.println("Total Agent Trips = "+agentTrip);
+	this.createLinkRouteIncidence();
+}
 
+private void createLinkRouteIncidence(){
+	this.timeBeans.keySet().forEach(t->{
+		this.trLinkIncidenceMatrix.put(t, new HashMap<>());
+		this.fareLinkincidenceMatrix.put(t, new HashMap<>());
+		this.odPairs.getTransitLinks(t).keySet().forEach(linkId->{
+			this.trLinkIncidenceMatrix.get(t).put(linkId, new ArrayList<>());
+		});
+	});
+	this.odPairs.getODpairset().entrySet().forEach(od->{
+		od.getValue().getLinkIncidence().entrySet().forEach(linkInd->{
+			List<Id<AnalyticalModelRoute>> routeIds = new ArrayList<>();
+			linkInd.getValue().forEach(r->{
+				routeIds.add(r.getRouteId());
+				
+			});
+			if(this.linkIncidenceMatrix.containsKey(linkInd.getKey())) {
+				this.linkIncidenceMatrix.get(linkInd.getKey()).addAll(routeIds);
+			}else {
+				this.linkIncidenceMatrix.put(linkInd.getKey(), routeIds);
+			}
+			List<Id<AnalyticalModelRoute>>routes = new ArrayList<>();
+			od.getValue().getRoutes().forEach(r->routes.add(r.getRouteId()));
+			this.routeODIncidence.put(od.getKey(), routes);
+		});
+		this.timeBeans.keySet().forEach(t->{
+			Map<Id<TransitLink>,List<Id<AnalyticalModelTransitRoute>>> timeRoutes = this.trLinkIncidenceMatrix.get(t);
+			Map<String, List<Id<AnalyticalModelTransitRoute>>> fareLinkTimeRoutes = this.fareLinkincidenceMatrix.get(t);
+			od.getValue().getTrLinkIncidence().entrySet().forEach(linkInd->{				
+				if(timeRoutes.containsKey(linkInd.getKey())) {
+					List<Id<AnalyticalModelTransitRoute>> routeIds = new ArrayList<>();
+					linkInd.getValue().forEach(r->{
+						routeIds.add(r.getTrRouteId());
+					});
+					timeRoutes.get(linkInd.getKey()).addAll(routeIds);
+				}
+				
+			});
+			this.trRouteODIncidence.compute(t, (k,v)->v==null?v=new HashMap<>():v);
+			this.trRouteODIncidence.get(t).put(od.getKey(), new ArrayList<>());
+			od.getValue().getTrRoutes(t).forEach(r->{
+				r.getFareLinks().forEach(fl->{
+					if(!fareLinkTimeRoutes.containsKey(fl.toString())){
+						fareLinkTimeRoutes.put(fl.toString(), new ArrayList<>());	
+					}
+					fareLinkTimeRoutes.get(fl.toString()).add(r.getTrRouteId());
+				});
+				this.trRouteODIncidence.get(t).get(od.getKey()).add(r.getTrRouteId());
+			});
+		
+		});
+	});
+	
 }
 
 private LinkedHashMap<String,Double> handleBasicParams(LinkedHashMap<String,Double> params, String subPopulation, Config config){
@@ -243,6 +362,8 @@ private LinkedHashMap<String,Double> handleBasicParams(LinkedHashMap<String,Doub
 		if(subPopulation!=null && (s.contains(subPopulation)||s.contains("All"))) {
 			newParams.put(s.split(" ")[1],params.get(s));
 		}else if (subPopulation == null) {
+			newParams.put(s, params.get(s));
+		}else if(subPopulation!=null) {//this will allow the unknown param to enter
 			newParams.put(s, params.get(s));
 		}
 	}
@@ -274,6 +395,7 @@ public Measurements perFormSUE(LinkedHashMap<String, Double> params,Measurements
 
 private Measurements performAssignment(LinkedHashMap<String,Double> params, LinkedHashMap<String,Double> anaParams, Measurements originalMeasurements) {
 	Measurements measurementsToUpdate = null;
+	
 	SUEModelOutput flow = this.performAssignment(params, anaParams);
 	
 	if(originalMeasurements==null) {//for now we just add the fare link and link volume for a null measurements
@@ -316,24 +438,24 @@ private Measurements performAssignment(LinkedHashMap<String,Double> params, Link
 }
 
 private SUEModelOutput performAssignment( LinkedHashMap<String,Double> params, LinkedHashMap<String,Double> anaParams) {
-	SUEModelOutput flow = null;
-//	for(int counter = 1; counter < this.maxIter; counter++) {
-//		if(counter == 1)this.createIncidenceMaps(population);
-//		
-//		flow  = this.performNetworkLoading(population, params, anaParams,counter);//link incidences are ready after this step
-//		this.caclulateGradient(population, counter, params, anaParams);
-//		boolean shouldStop = this.updateVolume(flow.getLinkVolume(), flow.getLinkTransitVolume(), counter);//transit link dependencies are ready after this step
-//		if(shouldStop) {
-//			break;
-//		}
-//	}
-//	flow.setMaaSPackageUsage(this.calculateMaaSPackageUsage());
+	SUEModelOutput flow = new SUEModelOutput(new HashMap<>(),new HashMap<>(),new HashMap<>(),new HashMap<>(),new HashMap<>());
+	//this.resetCarDemand();
+	for(String timeId:this.timeBeans.keySet()) {
+		SUEModelOutput flowOut = this.singleTimeBeanTA(params, anaParams, timeId);
+		flow.getLinkVolume().putAll(flowOut.getLinkVolume());
+		flow.getLinkTravelTime().putAll(flowOut.getLinkTravelTime());
+		flow.getLinkTransitVolume().putAll(flowOut.getLinkTransitVolume());
+		flow.getTrLinkTravelTime().putAll(flowOut.getTrLinkTravelTime());
+		flow.getFareLinkVolume().putAll(flowOut.getFareLinkVolume());
+	}
 	return flow;
 }
 
-public void singleTimeBeanTA(LinkedHashMap<String, Double> params,LinkedHashMap<String,Double> anaParams,String timeBeanId) {
-	Map<Id<TransitLink>, Double> linkTransitVolume;
-	Map<Id<Link>,Double> linkCarVolume;
+public SUEModelOutput singleTimeBeanTA(LinkedHashMap<String, Double> params,LinkedHashMap<String,Double> anaParams,String timeBeanId) {
+	Map<Id<TransitLink>, Double> linkTransitVolume =null;
+	Map<Id<Link>,Double> linkCarVolume = null;
+	Map<String,Map<String,Double>> fareLinkVolume = new HashMap<>();
+	fareLinkVolume.put(timeBeanId, new HashMap<>());
 	boolean shouldStop=false;
 	
 	for(int i=1;i<500;i++) {
@@ -343,6 +465,7 @@ public void singleTimeBeanTA(LinkedHashMap<String, Double> params,LinkedHashMap<
 		linkTransitVolume=this.performTransitNetworkLoading(timeBeanId,i,params,anaParams);
 		shouldStop=this.CheckConvergence(linkCarVolume, linkTransitVolume, this.tollerance, timeBeanId,i);
 		this.UpdateLinkVolume(linkCarVolume, linkTransitVolume, i, timeBeanId);
+		this.caclulateGradient(timeBeanId, i, params, anaParams);
 		if(i==1 && shouldStop==true) {
 			boolean demandEmpty=true;
 			for(AnalyticalModelODpair od:this.odPairs.getODpairset().values()) {
@@ -355,17 +478,18 @@ public void singleTimeBeanTA(LinkedHashMap<String, Double> params,LinkedHashMap<
 				System.out.println("The model cannot converge on first iteration!!!");
 			}
 		}
+		
 		if(shouldStop) {
-			//collect travel time
-			if(this.measurementsToUpdate!=null) {
-				List<Measurement>ms= this.measurementsToUpdate.getMeasurementsByType().get(MeasurementType.linkTravelTime);
-				for(Measurement m:ms) {
-					if(m.getVolumes().containsKey(timeBeanId)) {
-						m.putVolume(timeBeanId, ((CNLLink)this.networks.get(timeBeanId).getLinks().get(((ArrayList<Id<Link>>)m.getAttribute(Measurement.linkListAttributeName)).get(0))).getLinkTravelTime(this.timeBeans.get(timeBeanId),
-						params, anaParams));
-					}
-				}
-			}
+//			//collect travel time
+//			if(this.measurementsToUpdate!=null) {
+//				List<Measurement>ms= this.measurementsToUpdate.getMeasurementsByType().get(MeasurementType.linkTravelTime);
+//				for(Measurement m:ms) {
+//					if(m.getVolumes().containsKey(timeBeanId)) {
+//						m.putVolume(timeBeanId, ((CNLLink)this.networks.get(timeBeanId).getLinks().get(((ArrayList<Id<Link>>)m.getAttribute(Measurement.linkListAttributeName)).get(0))).getLinkTravelTime(this.timeBeans.get(timeBeanId),
+//						params, anaParams));
+//					}
+//				}
+//			}
 //			//collect travel time for transit
 //			for(TransitLink link:this.transitLinks.get(timeBeanId).values()) {
 //				if(link instanceof TransitDirectLink) {
@@ -378,17 +502,32 @@ public void singleTimeBeanTA(LinkedHashMap<String, Double> params,LinkedHashMap<
 //				}
 //				
 //			}
+			this.fareLinkincidenceMatrix.get(timeBeanId).entrySet().parallelStream().forEach(fl->{
+				double flow = 0;
+				for(Id<AnalyticalModelTransitRoute> trRoute:fl.getValue()){
+					flow+=this.trRouteFlow.get(timeBeanId).get(trRoute);
+				}
+				fareLinkVolume.get(timeBeanId).put(fl.getKey(),flow);
+			});
 			
 			break;
+			
 			}
 		this.performModalSplit(params, anaParams, timeBeanId);
 		
+		
 	}
+	Map<String,Map<Id<Link>,Double>>linkVolume = new HashMap<>();
+	linkVolume.put(timeBeanId, linkCarVolume);
 	
+	Map<String,Map<Id<TransitLink>,Double>>linkTrVolume = new HashMap<>();
+	linkTrVolume.put(timeBeanId, linkTransitVolume);
+	SUEModelOutput flow = new SUEModelOutput(linkVolume, linkTrVolume, outputLinkTT, outputTrLinkTT, fareLinkVolume);
+	return flow;
 	
 }
 
-protected HashMap<Id<Link>,Double> NetworkLoadingCarSingleOD(Id<AnalyticalModelODpair> ODpairId,String timeBeanId,double counter,LinkedHashMap<String,Double> params, LinkedHashMap<String, Double> anaParams){
+protected HashMap<Id<Link>,Double> NetworkLoadingCarSingleOD(Id<AnalyticalModelODpair> ODpairId,String timeBeanId,double counter,LinkedHashMap<String,Double> oparams, LinkedHashMap<String, Double> anaParams){
 	
 	AnalyticalModelODpair odpair=this.odPairs.getODpairset().get(ODpairId);
 	String subPopulation = odpair.getSubPopulation();
@@ -398,7 +537,7 @@ protected HashMap<Id<Link>,Double> NetworkLoadingCarSingleOD(Id<AnalyticalModelO
 	Map<Id<AnalyticalModelRoute>,Double> routeFlows=new HashMap<>();
 	HashMap<Id<Link>,Double> linkFlows=new HashMap<>();
 	
-	params = this.handleBasicParams(params, subPopulation, this.scenario.getConfig());
+	LinkedHashMap<String,Double> params = this.handleBasicParams(oparams, subPopulation, this.scenario.getConfig());
 	
 	//double totalUtility=0;
 	
@@ -408,6 +547,7 @@ protected HashMap<Id<Link>,Double> NetworkLoadingCarSingleOD(Id<AnalyticalModelO
 	Map<Id<AnalyticalModelRoute>,Double> utility=this.routeUtilities.get(timeBeanId);
 	double maxUtil = Double.MIN_VALUE;
 	double denominator = 0;
+	double expectedMaxUtil = 0;
 	for(AnalyticalModelRoute r:routes){
 		double u=0;
 		
@@ -415,7 +555,8 @@ protected HashMap<Id<Link>,Double> NetworkLoadingCarSingleOD(Id<AnalyticalModelO
 		u=u+Math.log(odpair.getAutoPathSize().get(r.getRouteId()));//adding the path size term
 		if(maxUtil<u)maxUtil = u;
 		utility.put(r.getRouteId(), u);
-		odpair.updateRouteUtility(r.getRouteId(), u,timeBeanId);// Not sure if this is needed
+		expectedMaxUtil+=Math.exp(u*anaParams.get(CNLSUEModel.LinkMiuName));
+		//odpair.updateRouteUtility(r.getRouteId(), u,timeBeanId);// Not sure if this is needed
 		
 		//This Check is to make sure the exp(utility) do not go to infinity.
 		if(u>300||u<-300) {
@@ -423,8 +564,9 @@ protected HashMap<Id<Link>,Double> NetworkLoadingCarSingleOD(Id<AnalyticalModelO
 			//throw new IllegalArgumentException("stop!!!");
 		}
 	}
+	this.expectedMaximumCarUtility.get(timeBeanId).put(ODpairId, 1/anaParams.get(CNLSUEModel.LinkMiuName)*Math.log(expectedMaxUtil));
 	for(AnalyticalModelRoute r:routes){
-		denominator += Math.exp(utility.get(r.getRouteId())-maxUtil);
+		denominator += Math.exp(anaParams.get(CNLSUEModel.LinkMiuName)*(utility.get(r.getRouteId())-maxUtil));
 	}
 	
 	//This is the route flow split
@@ -432,7 +574,7 @@ protected HashMap<Id<Link>,Double> NetworkLoadingCarSingleOD(Id<AnalyticalModelO
 	for(AnalyticalModelRoute r:routes){
 		double u=utility.get(r.getRouteId());
 		double demand = this.carDemand.get(timeBeanId).get(ODpairId);
-		double prob = (u-maxUtil)/denominator;
+		double prob = Math.exp(anaParams.get(CNLSUEModel.LinkMiuName)*(u-maxUtil))/denominator;
 		this.routeProb.get(timeBeanId).put(r.getRouteId(), prob);
 		double flow=prob*demand;
 		//For testing purpose, can be removed later
@@ -441,7 +583,8 @@ protected HashMap<Id<Link>,Double> NetworkLoadingCarSingleOD(Id<AnalyticalModelO
 			throw new IllegalArgumentException("Wait!!!!Error!!!!");
 		}
 		routeFlows.put(r.getRouteId(),flow);
-		odpair.getRouteFlow().get(timeBeanId).put(r.getRouteId(), flow);	
+		odpair.getRouteFlow().get(timeBeanId).put(r.getRouteId(), flow);
+		this.routeFlow.get(timeBeanId).put(r.getRouteId(), flow);
 	}
 	for(Id<Link> linkId:this.odPairs.getODpairset().get(ODpairId).getLinkIncidence().keySet()){
 		double linkflow=0;
@@ -464,16 +607,17 @@ protected HashMap<Id<Link>,Double> NetworkLoadingCarSingleOD(Id<AnalyticalModelO
  * @param anaParams 
  * @return
  */
-protected HashMap<Id<TransitLink>,Double> NetworkLoadingTransitSingleOD(Id<AnalyticalModelODpair> ODpairId,String timeBeanId,int counter,LinkedHashMap<String,Double> params, LinkedHashMap<String, Double> anaParams){
+protected HashMap<Id<TransitLink>,Double> NetworkLoadingTransitSingleOD(Id<AnalyticalModelODpair> ODpairId,String timeBeanId,int counter,LinkedHashMap<String,Double> oparams, LinkedHashMap<String, Double> anaParams){
 	
 	AnalyticalModelODpair odpair=this.odPairs.getODpairset().get(ODpairId);
 	List<AnalyticalModelTransitRoute> routes=odpair.getTrRoutes(timeBeanId);
 	
 	HashMap<Id<AnalyticalModelTransitRoute>,Double> routeFlows=new HashMap<>();
 	HashMap<Id<TransitLink>,Double> linkFlows=new HashMap<>();
-	
+	String subPopulation = odpair.getSubPopulation();
+	LinkedHashMap<String,Double> params = this.handleBasicParams(oparams, subPopulation, this.scenario.getConfig());
 	Map<Id<AnalyticalModelTransitRoute>,Double> utility=this.trRouteUtilities.get(timeBeanId);
-	
+	double expectedMaxUtil = 0;
 	if(routes!=null && routes.size()!=0) {
 		double maxUtil = Double.MIN_VALUE;
 		double denominator = 0;
@@ -484,6 +628,7 @@ protected HashMap<Id<TransitLink>,Double> NetworkLoadingTransitSingleOD(Id<Analy
 					this.networks.get(timeBeanId),this.fareCalculator,null,this.timeBeans.get(timeBeanId));
 			u+=Math.log(odpair.getTrPathSize().get(timeBeanId).get(r.getTrRouteId()));//adding the path size term
 			if(maxUtil<u)maxUtil = u;
+			expectedMaxUtil+=Math.exp(u*anaParams.get(CNLSUEModel.LinkMiuName));
 			if(u==Double.NaN) {
 				logger.error("The flow is NAN. This can happen for a number of reasons. Mostly is total utility of all the routes in a OD pair is zero");
 				throw new IllegalArgumentException("Utility is NAN!!!");
@@ -492,21 +637,21 @@ protected HashMap<Id<TransitLink>,Double> NetworkLoadingTransitSingleOD(Id<Analy
 			if(u>300) {
 				logger.warn("STOP!!!Utility is too large >300");
 			}
-			odpair.updateTrRouteUtility(r.getTrRouteId(), u,timeBeanId);
+			//odpair.updateTrRouteUtility(r.getTrRouteId(), u,timeBeanId);
 			utility.put(r.getTrRouteId(), u);
 
 		}
+		this.expectedMaximumTrUtility.get(timeBeanId).put(ODpairId, 1/anaParams.get(CNLSUEModel.LinkMiuName)*Math.log(expectedMaxUtil));
 		for(AnalyticalModelTransitRoute r:routes){
-			denominator += Math.exp(utility.get(r.getTrRouteId())-maxUtil);
+			denominator += Math.exp(anaParams.get(CNLSUEModel.LinkMiuName)*(utility.get(r.getTrRouteId())-maxUtil));
 		}
 
 		for(AnalyticalModelTransitRoute r:routes){
 			double totalDemand=this.Demand.get(timeBeanId).get(ODpairId);
 			double carDemand=this.carDemand.get(timeBeanId).get(ODpairId);
 			double q=(totalDemand-carDemand);
-			String id=null;
 			double u=utility.get(r.getTrRouteId());
-			double prob = (u-maxUtil)/denominator;
+			double prob = Math.exp(anaParams.get(CNLSUEModel.LinkMiuName)*(u-maxUtil))/denominator;
 			this.trRouteProb.get(timeBeanId).put(r.getTrRouteId(), prob);
 			double flow=q*prob;
 			if(Double.isNaN(flow)||flow==Double.POSITIVE_INFINITY||flow==Double.NEGATIVE_INFINITY) {
@@ -514,7 +659,9 @@ protected HashMap<Id<TransitLink>,Double> NetworkLoadingTransitSingleOD(Id<Analy
 				throw new IllegalArgumentException("Error!!!!");
 			}
 			routeFlows.put(r.getTrRouteId(),flow);
-			odpair.getTrRouteFlow().get(timeBeanId).put(r.getTrRouteId(), flow);		
+			odpair.getTrRouteFlow().get(timeBeanId).put(r.getTrRouteId(), flow);	
+			
+			this.trRouteFlow.get(timeBeanId).put(r.getTrRouteId(), flow);
 		}
 
 	}
@@ -774,7 +921,7 @@ protected boolean CheckConvergence(Map<Id<Link>,Double> linkVolume,Map<Id<Transi
 		System.out.println("WAIT!!!!Problem!!!!!");
 	}
 	squareSum=Math.sqrt(squareSum);
-	if(counter==1) {
+	if(counter==1) {String id=null;
 		this.error.get(timeBeanId).clear();
 	}
 	this.error.get(timeBeanId).add(squareSum);
@@ -820,22 +967,27 @@ protected void performModalSplit(LinkedHashMap<String,Double>params,LinkedHashMa
 		double demand=this.Demand.get(timeBeanId).get(odPair.getODpairId());
 		if(demand!=0) { 
 			
-		double carUtility=odPair.getExpectedMaximumCarUtility(params, anaParams, timeBeanId);
-		double transitUtility=odPair.getExpectedMaximumTransitUtility(params, anaParams, timeBeanId);
+		double carUtility=this.expectedMaximumCarUtility.get(timeBeanId).get(odPair.getODpairId());
+		double transitUtility=this.expectedMaximumTrUtility.get(timeBeanId).get(odPair.getODpairId());
 		
 		if(carUtility==Double.NEGATIVE_INFINITY||transitUtility==Double.POSITIVE_INFINITY||
 				Math.exp(transitUtility*modeMiu)==Double.POSITIVE_INFINITY) {
 			this.carDemand.get(timeBeanId).put(odPair.getODpairId(), 0.0);
+			this.carProbability.get(timeBeanId).put(odPair.getODpairId(), 0.);
 			
 		}else if(transitUtility==Double.NEGATIVE_INFINITY||carUtility==Double.POSITIVE_INFINITY
 				||Math.exp(carUtility*modeMiu)==Double.POSITIVE_INFINITY) {
 			this.carDemand.get(timeBeanId).put(odPair.getODpairId(), this.Demand.get(timeBeanId).get(odPair.getODpairId()));
+			this.carProbability.get(timeBeanId).put(odPair.getODpairId(), 1.);
 		}else if(carUtility==Double.NEGATIVE_INFINITY && transitUtility==Double.NEGATIVE_INFINITY){
 			this.carDemand.get(timeBeanId).put(odPair.getODpairId(), 0.);
+			this.carProbability.get(timeBeanId).put(odPair.getODpairId(), 0.);
 		}else {
-			double carProportion=Math.exp(carUtility*modeMiu)/(Math.exp(carUtility*modeMiu)+Math.exp(transitUtility*modeMiu));
+			double maxUtil = Math.max(carUtility, transitUtility);
+			double carProportion=Math.exp((carUtility-maxUtil)*modeMiu)/(Math.exp((carUtility-maxUtil)*modeMiu)+Math.exp((transitUtility-maxUtil)*modeMiu));
+			this.carProbability.get(timeBeanId).put(odPair.getODpairId(), carProportion);
 			//System.out.println("Car Proportion = "+carProportion);
-			Double cardemand=Math.exp(carUtility*modeMiu)/(Math.exp(carUtility*modeMiu)+Math.exp(transitUtility*modeMiu))*this.Demand.get(timeBeanId).get(odPair.getODpairId());
+			Double cardemand=carProportion*this.Demand.get(timeBeanId).get(odPair.getODpairId());
 			if(cardemand==Double.NaN||cardemand==Double.POSITIVE_INFINITY||cardemand==Double.NEGATIVE_INFINITY) {
 				logger.error("Car Demand is invalid");
 				throw new IllegalArgumentException("car demand is invalid");
@@ -844,6 +996,226 @@ protected void performModalSplit(LinkedHashMap<String,Double>params,LinkedHashMa
 		}
 	}
 	}
+}
+
+/**
+ * This function will initialize all gradients with zero
+ * @param Oparams
+ * Be very careful while using the function as it uses all the incidences, which are not ready until the first iteration. The updating can be avoided though.
+ * 
+ * TODO: Should I use ConcurrentHashMap instead of HashMap?
+ * TODO: Should I use parallelStream instead of Stream?
+ */
+public void initializeGradients(LinkedHashMap<String,Double> Oparams) {
+	Map<String,Double> zeroGrad = new HashMap<>();
+	this.gradientKeys = ODUtils.extractODVarKeys(Oparams.keySet());
+	this.gradientKeys.forEach(k->{
+		zeroGrad.put(k, 0.);
+	});
+	
+	for(String timeId:this.timeBeans.keySet()) {
+		this.linkGradient.put(timeId, new HashMap<>());
+		this.linkGradient.get(timeId).putAll(this.networks.get(timeId).getLinks().keySet().parallelStream().collect(Collectors.toMap(kk->kk, kk->new HashMap<>(zeroGrad))));
+		this.linkTTGradient.put(timeId, new HashMap<>());
+		this.linkTTGradient.get(timeId).putAll(this.networks.get(timeId).getLinks().keySet().parallelStream().collect(Collectors.toMap(kk->kk, kk->new HashMap<>(zeroGrad))));
+		this.trLinkGradient.put(timeId, new HashMap<>());
+		this.trLinkGradient.get(timeId).putAll(this.transitLinks.get(timeId).keySet().parallelStream().collect(Collectors.toMap(kk->kk, kk->new HashMap<>(zeroGrad))));
+		this.trLinkTTGradient.put(timeId, new HashMap<>());
+		this.trLinkTTGradient.get(timeId).putAll(this.transitLinks.get(timeId).keySet().parallelStream().collect(Collectors.toMap(kk->kk, kk->new HashMap<>(zeroGrad))));
+		this.routeFlowGradient.put(timeId, new HashMap<>());
+		this.routeFlowGradient.get(timeId).putAll(this.routeProb.get(timeId).keySet().parallelStream().collect(Collectors.toMap(kk->kk, kk->new HashMap<>(zeroGrad))));
+		this.trRouteFlowGradient.put(timeId, new HashMap<>());
+		this.trRouteFlowGradient.get(timeId).putAll(this.trRouteProb.get(timeId).keySet().parallelStream().collect(Collectors.toMap(kk->kk, kk->new HashMap<>(zeroGrad))));
+		this.fareLinkGradient.put(timeId, new HashMap<>());
+		this.fareLinkGradient.get(timeId).putAll(this.fareLinkincidenceMatrix.get(timeId).keySet().parallelStream().collect(Collectors.toMap(kk->kk, kk->new HashMap<>(zeroGrad))));
+	}
+	
+	logger.info("Finished initializing gradients");
+}
+
+
+/**
+ * This is a huge step forward. This class can calculate gradient using backpropagation
+ * Still not checked
+ * @param population
+ * @param counter
+ * @param Oparams
+ * @param anaParam
+ */
+public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,Double> oparams, LinkedHashMap<String,Double>anaParam) {
+
+	
+	if(counter == 1) {//maybe its better to do it once in the generate od pair and then not do it again 
+		this.initializeGradients(oparams);
+	}else {
+		//Calculate the travel time gradients
+		this.linkTTGradient.get(timeId).entrySet().parallelStream().forEach(linkGradientMap-> {
+			//for(Entry<Id<Link>,Map<String,Double>> linkGradientMap:timeMap.getValue().entrySet()) {
+			CNLLink link = (CNLLink) this.networks.get(timeId).getLinks().get(linkGradientMap.getKey());
+			for(Entry<String, Double> var:linkGradientMap.getValue().entrySet()) {
+				double flow = link.getLinkCarVolume()+link.getLinkTransitVolume();
+				double t_0 = link.getLength()/link.getFreespeed();//should be in sec
+				double cap = link.getCapacity()*(this.timeBeans.get(timeId).getSecond()-this.timeBeans.get(timeId).getFirst())/3600;
+				double beta = anaParam.get(ODDifferentiableSUEModel.BPRbetaName);
+				double grad = anaParam.get(ODDifferentiableSUEModel.BPRalphaName)*beta*t_0/Math.pow(cap, beta)*Math.pow(flow,beta-1)*this.linkGradient.get(timeId).get(link.getId()).get(var.getKey());
+				this.linkTTGradient.get(timeId).get(link.getId()).put(var.getKey(),grad);
+			}
+			
+		});
+		
+		this.trLinkTTGradient.get(timeId).entrySet().parallelStream().forEach(linkGradientMap->{	
+			TransitLink link = this.transitLinks.get(timeId).get(linkGradientMap.getKey());
+			for(Entry<String, Double> var:linkGradientMap.getValue().entrySet()) {
+				if(link instanceof TransitDirectLink) {
+					CNLTransitDirectLink dlink = (CNLTransitDirectLink)link;
+					double grad = 0;
+					for(Id<Link> linkId:dlink.getLinkList()) {
+						if(this.linkTTGradient.get(timeId).get(linkId)==null) {//As we have used the link plan incidence to loop, there might be some link not used by any od pairs.
+							//For these links, no matter what the decision variables are, the flow will not change (flows are from transit vehicle flow only). So, for these links, we can assume the gradient
+							//to be zero.// Not sure if needed here
+							logger.debug("Dead link here. Putting gradient = 0.");
+							
+						}else {
+							grad+=this.linkTTGradient.get(timeId).get(linkId).get(var.getKey());
+						}
+						
+					}
+					if(Double.isNaN(grad))
+						logger.debug("Debug point. Gradient is NAN");
+					this.trLinkTTGradient.get(timeId).get(dlink.getTrLinkId()).put(var.getKey(), grad);
+				}else if(link instanceof TransitTransferLink){
+					CNLTransitTransferLink transferLink = (CNLTransitTransferLink)link;
+					CNLTransitDirectLink dlink = transferLink.getNextdLink();
+					double grad = 0;
+					if(dlink != null) {//For an alighting link only (the last transfer leg) the next dlink is null. 
+						//The gradient for this link's travel time is zero as the waiting time for a alighting only link is always zero.
+						CNLLink plink = (CNLLink) this.networks.get(timeId).getLinks().get(transferLink.getStartingLinkId());
+						double headway = dlink.getHeadway();
+						double cap = dlink.getCapacity();
+						double freq = dlink.getFrequency();
+						double beta = anaParam.get(ODDifferentiableSUEModel.TransferbetaName);
+						double passengerTobeBorded = transferLink.getPassangerCount();
+						double passengerOnBord = plink.getTransitPassengerVolume(dlink.getLineId()+"_"+dlink.getRouteId());
+						double volume = passengerTobeBorded+passengerOnBord;
+						double grad1 = beta*headway/Math.pow(cap*freq, beta)*Math.pow(volume, beta-1);//if both the second and first term is 
+						if(Double.isInfinite(grad1)||Double.isNaN(grad1))grad1 = 0;
+						double grad2 = this.trLinkGradient.get(timeId).get(transferLink.getTrLinkId()).get(var.getKey());
+						for(Id<TransitLink> l:transferLink.getIncidentLinkIds()){
+							grad2+=this.trLinkGradient.get(timeId).get(l).get(var.getKey());
+						}
+						grad = grad1*grad2;
+					}else {
+						grad = 0;
+					}
+					if(Double.isNaN(grad))
+						logger.debug("Debug point. Gradient is NAN");
+					this.trLinkTTGradient.get(timeId).get(transferLink.getTrLinkId()).put(var.getKey(),grad);
+				}
+			}
+		});
+		
+	}
+	
+	
+	this.odPairs.getODpairset().entrySet().parallelStream().forEach(od->{
+		for(String var:this.gradientKeys) {
+			//calculate the auto route utility gradient first
+			
+			LinkedHashMap<String,Double> params = this.handleBasicParams(oparams, od.getValue().getSubPopulation(), this.scenario.getConfig());
+			Map<Id<AnalyticalModelRoute>,Double> routeUGradient = new HashMap<>();
+			double carUGrad = 0;
+			for(AnalyticalModelRoute route: od.getValue().getRoutes()) {
+				double uGradient = 0;
+				for(Id<Link>linkId: route.getLinkIds()) {
+					uGradient+=this.linkTTGradient.get(timeId).get(linkId).get(var);
+				}
+				uGradient*=(params.get(CNLSUEModel.MarginalUtilityofTravelCarName)-params.get(CNLSUEModel.MarginalUtilityofPerformName));
+				if(Double.isNaN(uGradient))logger.debug("Debug point. Gradient is NAN");
+				routeUGradient.put(route.getRouteId(), uGradient);
+				carUGrad+=this.routeProb.get(timeId).get(route.getRouteId())*uGradient;
+			}
+			Map<Id<AnalyticalModelTransitRoute>,Double> trRouteUGradient = new HashMap<>();	
+			double trUGradient = 0;
+			for(AnalyticalModelTransitRoute trRoute : od.getValue().getTrRoutes(timeId)) {
+				
+				double routeGradientDlink = 0;
+				double routeGradientTRLink = 0;
+				for(TransitDirectLink dlink:trRoute.getTransitDirectLinks()) {
+					routeGradientDlink += this.trLinkTTGradient.get(timeId).get(dlink.getTrLinkId()).get(var);
+				}
+				routeGradientDlink*=params.get(CNLSUEModel.MarginalUtilityofTravelptName)-params.get(CNLSUEModel.MarginalUtilityofPerformName);
+				for(TransitTransferLink trlink:trRoute.getTransitTransferLinks()) {
+					routeGradientTRLink += this.trLinkTTGradient.get(timeId).get(trlink.getTrLinkId()).get(var);
+				}
+				routeGradientTRLink*=params.get(CNLSUEModel.MarginalUtilityofWaitingName)-params.get(CNLSUEModel.MarginalUtilityofPerformName);
+				double grad = routeGradientDlink+routeGradientTRLink;
+				
+				if(Double.isNaN(grad))
+					logger.debug("Debug point. Gradient is NAN");
+				trRouteUGradient.put(trRoute.getTrRouteId(), grad);
+				trUGradient += this.trRouteProb.get(timeId).get(trRoute.getTrRouteId())*grad;
+			}
+			
+			if(od.getValue().getSubPopulation()!=null && (od.getValue().getSubPopulation().contains("GV")||od.getValue().getSubPopulation().contains("trip"))) {
+				carUGrad = 0;
+				trUGradient=0;
+			}
+			
+			//Calculate route flow gradient 
+			double pm = this.carProbability.get(timeId).get(od.getKey()); 
+			double d = this.Demand.get(timeId).get(od.getKey());
+			for(Entry<Id<AnalyticalModelRoute>, Double> rId:routeUGradient.entrySet()) {
+				double pr = this.routeProb.get(timeId).get(rId.getKey());
+				double term0 = pm*d*pr*(1-pr)*anaParam.get(CNLSUEModel.LinkMiuName)*rId.getValue();
+				double term1 = pr*d*pm*(1-pm)*anaParam.get(CNLSUEModel.ModeMiuName)*carUGrad;
+				double term2 = pr*pm*ODUtils.ifMatch_1_else_0(od.getKey(), timeId, var)*d/params.get(var);
+				double grad = term0 + term1 + term2;
+				this.routeFlowGradient.get(timeId).get(rId.getKey()).put(var, grad);
+			}
+			
+			for(Entry<Id<AnalyticalModelTransitRoute>, Double> trUGrad: trRouteUGradient.entrySet()) {
+				double pr = this.trRouteProb.get(timeId).get(trUGrad.getKey());
+				double term0 = (1-pm)*d*pr*(1-pr)*anaParam.get(CNLSUEModel.LinkMiuName)*trUGrad.getValue();
+				double term1 = pr*d*pm*(1-pm)*anaParam.get(CNLSUEModel.ModeMiuName)*trUGradient;
+				double term2 = pr*(1-pm)*ODUtils.ifMatch_1_else_0(od.getKey(), timeId, var)*d/params.get(var);
+				double grad = term0 + term1 + term2;
+				this.trRouteFlowGradient.get(timeId).get(trUGrad.getKey()).put(var, grad);
+			}
+		}
+	});
+	
+	
+	//finally the link volume and MaaSPackage usage gradient update
+	
+	this.linkGradient.get(timeId).entrySet().parallelStream().forEach(linkId->{
+		for(String var:this.gradientKeys) {
+			double grad = 0;
+			for(Id<AnalyticalModelRoute>r:this.linkIncidenceMatrix.get(linkId.getKey())) {
+				grad+=this.routeFlowGradient.get(timeId).get(r).get(var);
+			}
+			this.linkGradient.get(timeId).get(linkId.getKey()).put(var, grad);
+		}
+	});
+	
+	this.trLinkGradient.get(timeId).entrySet().parallelStream().forEach(linkId->{
+		for(String var:this.gradientKeys) {
+			double grad = 0;
+			for(Id<AnalyticalModelTransitRoute>r:this.trLinkIncidenceMatrix.get(timeId).get(linkId.getKey())) {
+				grad+=this.trRouteFlowGradient.get(timeId).get(r).get(var);
+			}
+			this.trLinkGradient.get(timeId).get(linkId.getKey()).put(var, grad);
+		}
+	});
+	this.fareLinkGradient.get(timeId).entrySet().parallelStream().forEach(linkId->{
+		for(String var:this.gradientKeys) {
+			double grad = 0;
+			for(Id<AnalyticalModelTransitRoute>r:this.fareLinkincidenceMatrix.get(timeId).get(linkId.getKey())) {
+				grad+=this.trRouteFlowGradient.get(timeId).get(r).get(var);
+			}
+			this.fareLinkGradient.get(timeId).get(linkId.getKey()).put(var, grad);
+		}
+	});
+	
 }
 
 
@@ -946,6 +1318,8 @@ private void resetCarDemand() {
 		this.carDemand.put(timeId, new HashMap<Id<AnalyticalModelODpair>, Double>());
 		this.routeUtilities.put(timeId,new ConcurrentHashMap<>());
 		this.trRouteUtilities.put(timeId, new ConcurrentHashMap<>());
+		this.routeFlow.put(timeId, new ConcurrentHashMap<>());
+		this.trRouteFlow.put(timeId, new ConcurrentHashMap<>());
 		this.routeProb.put(timeId, new ConcurrentHashMap<>());
 		this.trRouteProb.put(timeId, new ConcurrentHashMap<>());
 		this.expectedMaximumCarUtility.put(timeId, new ConcurrentHashMap<>());
@@ -958,6 +1332,7 @@ private void resetCarDemand() {
 	}
 }
 
+@Deprecated
 public Measurements perFormSUE(LinkedHashMap<String, Double> params,LinkedHashMap<String,Double> anaParams,Measurements originalMeasurements) {
 	this.resetCarDemand();
 	if(originalMeasurements==null) {
@@ -1144,4 +1519,27 @@ public Measurements perFormSUE(LinkedHashMap<String, Double> params,LinkedHashMa
 	//new OdInfoWriter("toyScenario/ODInfo/odInfo",this.timeBeans).writeOdInfo(this.getOdPairs(), getDemand(), getCarDemand(), inputParams, inputAnaParams);
 	return this.measurementsToUpdate;
 }
+
+public Map<String, Map<Id<Link>, Map<String, Double>>> getLinkGradient() {
+	return linkGradient;
+}
+
+
+
+public Map<String, Map<Id<TransitLink>, Map<String, Double>>> getTrLinkGradient() {
+	return trLinkGradient;
+}
+
+
+
+public Map<String, Map<String, Map<String, Double>>> getFareLinkGradient() {
+	return fareLinkGradient;
+}
+
+public Set<String> getGradientKeys() {
+	return gradientKeys;
+}
+
+
+
 }
