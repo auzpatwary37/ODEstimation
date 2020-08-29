@@ -1,1 +1,7 @@
 /target/
+data/*
+output/*
+fare/*
+toyScenarioLarge/*
+fullHk/*
+new Data/*

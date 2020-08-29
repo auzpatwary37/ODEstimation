@@ -625,7 +625,7 @@ protected HashMap<Id<TransitLink>,Double> NetworkLoadingTransitSingleOD(Id<Analy
 			double u=0;
 
 			u=r.calcRouteUtility(params, anaParams,
-					this.networks.get(timeBeanId),this.fareCalculator,null,this.timeBeans.get(timeBeanId));
+					this.networks.get(timeBeanId),this.transitLinks.get(timeBeanId),this.fareCalculator,null,this.timeBeans.get(timeBeanId));
 			u+=Math.log(odpair.getTrPathSize().get(timeBeanId).get(r.getTrRouteId()));//adding the path size term
 			if(maxUtil<u)maxUtil = u;
 			expectedMaxUtil+=Math.exp(u*anaParams.get(CNLSUEModel.LinkMiuName));
