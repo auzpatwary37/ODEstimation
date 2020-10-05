@@ -136,7 +136,8 @@ private Map<String,Map<Id<AnalyticalModelTransitRoute>,Map<String,Double>>> trRo
 private Map<String,Map<String,Map<String,Double>>> fareLinkGradient = new HashMap<>();
 
 
-
+private Map<String,Map<Id<Link>,Double>> linkVolumeUpdate = new HashMap<>();
+private Map<String,Map<Id<TransitLink>,Double>> linkTrVolumeUpdate = new HashMap<>();
 
 
 //This are needed for output generation 
@@ -464,8 +465,10 @@ public SUEModelOutput singleTimeBeanTA(LinkedHashMap<String, Double> params,Link
 		linkCarVolume=this.performCarNetworkLoading(timeBeanId,i,params,anaParams);
 		linkTransitVolume=this.performTransitNetworkLoading(timeBeanId,i,params,anaParams);
 		shouldStop=this.CheckConvergence(linkCarVolume, linkTransitVolume, this.tollerance, timeBeanId,i);
-		this.UpdateLinkVolume(linkCarVolume, linkTransitVolume, i, timeBeanId);
+		///the beta should already be calculated by this line. 
 		this.caclulateGradient(timeBeanId, i, params, anaParams);
+		
+		this.UpdateLinkVolume(linkCarVolume, linkTransitVolume, i, timeBeanId);
 		if(i==1 && shouldStop==true) {
 			boolean demandEmpty=true;
 			for(AnalyticalModelODpair od:this.odPairs.getODpairset().values()) {
@@ -795,71 +798,18 @@ protected Map<Id<TransitLink>,Double> performTransitNetworkLoading(String timeBe
  * @param timeBeanId - the specific time Bean Id for which the SUE is performed
  */
 
-@SuppressWarnings("unchecked")
-protected boolean UpdateLinkVolume(Map<Id<Link>,Double> linkVolume,Map<Id<TransitLink>,Double> transitlinkVolume,int counter,String timeBeanId){
-	double squareSum=0;
-	double flowSum=0;
-	double linkSum=0;
-	if(counter==1) {
-		this.beta.get(timeBeanId).clear();
-		//this.error.clear();
-		this.beta.get(timeBeanId).add(1.);
-	}else {
-		if(error.get(timeBeanId).get(counter-1)<error.get(timeBeanId).get(counter-2)) {
-			beta.get(timeBeanId).add(beta.get(timeBeanId).get(counter-2)+this.gammaMSA);
-		}else {
-			this.consecutiveSUEErrorIncrease.put(timeBeanId, this.consecutiveSUEErrorIncrease.get(timeBeanId)+1);
-			beta.get(timeBeanId).add(beta.get(timeBeanId).get(counter-2)+this.alphaMSA);
-			
-		}
-	}
-	
-	for(Id<Link> linkId:linkVolume.keySet()){
-		double newVolume=linkVolume.get(linkId);
-		double oldVolume=((AnalyticalModelLink) this.networks.get(timeBeanId).getLinks().get(linkId)).getLinkCarVolume();
-		flowSum+=oldVolume;
-		double update;
+protected void UpdateLinkVolume(Map<Id<Link>,Double> linkVolume,Map<Id<TransitLink>,Double> transitlinkVolume,int counter,String timeBeanId){
+	for(Id<Link> linkId:linkVolume.keySet()) {
 		double counterPart=1/beta.get(timeBeanId).get(counter-1);
 		//counterPart=1./counter;
-		update=counterPart*(newVolume-oldVolume);
-		if(oldVolume!=0) {
-			if(Math.abs(update)/oldVolume*100>this.tolleranceLink) {
-				linkSum+=1;
-			}
-		}
-		squareSum+=update*update;
+		double update=counterPart*this.linkVolumeUpdate.get(timeBeanId).get(linkId);
 		((AnalyticalModelLink) this.networks.get(timeBeanId).getLinks().get(linkId)).addLinkCarVolume(update);
 	}
 	for(Id<TransitLink> trlinkId:transitlinkVolume.keySet()){
-		//System.out.println("testing");
-		double newVolume=transitlinkVolume.get(trlinkId);
-		TransitLink trl=this.transitLinks.get(timeBeanId).get(trlinkId);
-		double oldVolume=trl.getPassangerCount();
-		double update;
+		//counterPart=1./counter;
 		double counterPart=1/beta.get(timeBeanId).get(counter-1);
-		
-		update=counterPart*(newVolume-oldVolume);
-		if(oldVolume!=0) {
-			if(Math.abs(update)/oldVolume*100>this.tolleranceLink) {
-				linkSum+=1;
-			}
-			
-		}
-		squareSum+=update*update;
+		double update=counterPart*this.linkTrVolumeUpdate.get(timeBeanId).get(trlinkId);
 		this.transitLinks.get(timeBeanId).get(trlinkId).addPassanger(update,this.networks.get(timeBeanId));
-	
-	}
-	squareSum=Math.sqrt(squareSum);
-	if(counter==1) {
-		this.error1.get(timeBeanId).clear();
-	}
-	error1.get(timeBeanId).add(squareSum);
-	
-	if(squareSum<this.tollerance) {
-		return true;
-		
-	}else {
-		return false;
 	}
 }
 
@@ -870,25 +820,28 @@ protected boolean UpdateLinkVolume(Map<Id<Link>,Double> linkVolume,Map<Id<Transi
  * @return
  */
 protected boolean CheckConvergence(Map<Id<Link>,Double> linkVolume,Map<Id<TransitLink>,Double> transitlinkVolume, double tollerance,String timeBeanId,int counter){
-	double linkBelow1=0;
+	double linkAbove1=0;
 	double squareSum=0;
 	double sum=0;
 	double error=0;
+	this.linkVolumeUpdate.put(timeBeanId, new HashMap<>());
+	this.linkTrVolumeUpdate.put(timeBeanId, new HashMap<>());
 	for(Id<Link> linkid:linkVolume.keySet()){
 		if(linkVolume.get(linkid)==0) {
 			error=0;
 		}else {
 			double currentVolume=((AnalyticalModelLink) this.networks.get(timeBeanId).getLinks().get(linkid)).getLinkCarVolume();
 			double newVolume=linkVolume.get(linkid);
+			this.linkVolumeUpdate.get(timeBeanId).put(linkid, newVolume - currentVolume);
 			error=Math.pow((currentVolume-newVolume),2);
 			if(error==Double.POSITIVE_INFINITY||error==Double.NEGATIVE_INFINITY) {
 				throw new IllegalArgumentException("Error is infinity!!!");
 			}
-			if(error/newVolume*100>tollerance) {					
+			if(newVolume != 0 && error/newVolume*100>tollerance) {					
 				sum+=1;
 			}
-			if(error<1) {
-				linkBelow1++;
+			if(error>1) {
+				linkAbove1++;
 			}
 		}
 		
@@ -903,13 +856,14 @@ protected boolean CheckConvergence(Map<Id<Link>,Double> linkVolume,Map<Id<Transi
 		}else {
 			double currentVolume=this.transitLinks.get(timeBeanId).get(transitlinkid).getPassangerCount();
 			double newVolume=transitlinkVolume.get(transitlinkid);
+			this.linkTrVolumeUpdate.get(timeBeanId).put(transitlinkid, newVolume-currentVolume);
 			error=Math.pow((currentVolume-newVolume),2);
-			if(error/newVolume*100>tollerance) {
+			if(newVolume!=0 && error/newVolume*100>tollerance) {
 
 				sum+=1;
 			}
-			if(error<1) {
-				linkBelow1++;
+			if(error>1) {
+				linkAbove1++;
 			}
 		}
 		if(error==Double.NaN||error==Double.NEGATIVE_INFINITY) {
@@ -935,11 +889,27 @@ protected boolean CheckConvergence(Map<Id<Link>,Double> linkVolume,Map<Id<Transi
 //		e.printStackTrace();
 //	}
 	
-	if (squareSum<=1||sum==0||linkBelow1==linkVolume.size()+transitlinkVolume.size()){
+	if(counter==1) {
+		this.beta.get(timeBeanId).clear();
+		//this.error.clear();
+		this.beta.get(timeBeanId).add(1.);
+	}else {
+		if(this.error.get(timeBeanId).get(counter-1)<this.error.get(timeBeanId).get(counter-2)) {
+			beta.get(timeBeanId).add(beta.get(timeBeanId).get(counter-2)+this.gammaMSA);
+		}else {
+			this.consecutiveSUEErrorIncrease.put(timeBeanId, this.consecutiveSUEErrorIncrease.get(timeBeanId)+1);
+			beta.get(timeBeanId).add(beta.get(timeBeanId).get(counter-2)+this.alphaMSA);
+			
+		}
+	}
+	
+	if (squareSum<=1||sum==0||linkAbove1==0){
 		return true;
 	}else{
 		return false;
 	}
+	
+	
 	
 }
 /**
@@ -1069,6 +1039,7 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 				if(link instanceof TransitDirectLink) {
 					CNLTransitDirectLink dlink = (CNLTransitDirectLink)link;
 					double grad = 0;
+					
 					for(Id<Link> linkId:dlink.getLinkList()) {
 						if(this.linkTTGradient.get(timeId).get(linkId)==null) {//As we have used the link plan incidence to loop, there might be some link not used by any od pairs.
 							//For these links, no matter what the decision variables are, the flow will not change (flows are from transit vehicle flow only). So, for these links, we can assume the gradient
@@ -1077,8 +1048,7 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 							
 						}else {
 							grad+=this.linkTTGradient.get(timeId).get(linkId).get(var.getKey());
-						}
-						
+						}	
 					}
 					if(Double.isNaN(grad))
 						logger.debug("Debug point. Gradient is NAN");
@@ -1163,11 +1133,12 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 			
 			//Calculate route flow gradient 
 			double pm = this.carProbability.get(timeId).get(od.getKey()); 
+			double modeConst = pm*carUGrad+(1-pm)*trUGradient;
 			double d = this.Demand.get(timeId).get(od.getKey());
 			for(Entry<Id<AnalyticalModelRoute>, Double> rId:routeUGradient.entrySet()) {
 				double pr = this.routeProb.get(timeId).get(rId.getKey());
-				double term0 = pm*d*pr*(1-pr)*anaParam.get(CNLSUEModel.LinkMiuName)*rId.getValue();
-				double term1 = pr*d*pm*(1-pm)*anaParam.get(CNLSUEModel.ModeMiuName)*carUGrad;
+				double term0 = pm*d*pr*anaParam.get(CNLSUEModel.LinkMiuName)*(rId.getValue()-carUGrad);
+				double term1 = pr*d*pm*anaParam.get(CNLSUEModel.ModeMiuName)*(carUGrad-modeConst);
 				double term2 = pr*pm*ODUtils.ifMatch_1_else_0(od.getKey(), timeId, var)*d/params.get(var);
 				double grad = term0 + term1 + term2;
 				this.routeFlowGradient.get(timeId).get(rId.getKey()).put(var, grad);
@@ -1175,8 +1146,8 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 			
 			for(Entry<Id<AnalyticalModelTransitRoute>, Double> trUGrad: trRouteUGradient.entrySet()) {
 				double pr = this.trRouteProb.get(timeId).get(trUGrad.getKey());
-				double term0 = (1-pm)*d*pr*(1-pr)*anaParam.get(CNLSUEModel.LinkMiuName)*trUGrad.getValue();
-				double term1 = pr*d*pm*(1-pm)*anaParam.get(CNLSUEModel.ModeMiuName)*trUGradient;
+				double term0 = (1-pm)*d*pr*anaParam.get(CNLSUEModel.LinkMiuName)*(trUGrad.getValue()-trUGradient);
+				double term1 = pr*d*(1-pm)*anaParam.get(CNLSUEModel.ModeMiuName)*(trUGradient-modeConst);
 				double term2 = pr*(1-pm)*ODUtils.ifMatch_1_else_0(od.getKey(), timeId, var)*d/params.get(var);
 				double grad = term0 + term1 + term2;
 				this.trRouteFlowGradient.get(timeId).get(trUGrad.getKey()).put(var, grad);
@@ -1189,21 +1160,25 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 	
 	this.linkGradient.get(timeId).entrySet().parallelStream().forEach(linkId->{
 		for(String var:this.gradientKeys) {
+			double oldGrad = this.linkGradient.get(timeId).get(linkId.getKey()).get(var);
 			double grad = 0;
 			for(Id<AnalyticalModelRoute>r:this.linkIncidenceMatrix.get(linkId.getKey())) {
 				grad+=this.routeFlowGradient.get(timeId).get(r).get(var);
 			}
-			this.linkGradient.get(timeId).get(linkId.getKey()).put(var, grad);
+			double gradUpdate = oldGrad + (grad-oldGrad)*(1/this.beta.get(timeId).get(counter-1));
+			this.linkGradient.get(timeId).get(linkId.getKey()).put(var, gradUpdate);
 		}
 	});
 	
 	this.trLinkGradient.get(timeId).entrySet().parallelStream().forEach(linkId->{
 		for(String var:this.gradientKeys) {
+			double oldGrad = this.trLinkGradient.get(timeId).get(linkId.getKey()).get(var);
 			double grad = 0;
 			for(Id<AnalyticalModelTransitRoute>r:this.trLinkIncidenceMatrix.get(timeId).get(linkId.getKey())) {
 				grad+=this.trRouteFlowGradient.get(timeId).get(r).get(var);
 			}
-			this.trLinkGradient.get(timeId).get(linkId.getKey()).put(var, grad);
+			double gradUpdate = oldGrad + (grad-oldGrad)*(1/this.beta.get(timeId).get(counter-1));
+			this.trLinkGradient.get(timeId).get(linkId.getKey()).put(var, gradUpdate);
 		}
 	});
 	this.fareLinkGradient.get(timeId).entrySet().parallelStream().forEach(linkId->{
