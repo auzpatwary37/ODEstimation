@@ -67,7 +67,7 @@ private Map<String,Double> consecutiveSUEErrorIncrease=new ConcurrentHashMap<>()
 private LinkedHashMap<String,Double> AnalyticalModelInternalParams=new LinkedHashMap<>();
 private LinkedHashMap<String,Double> Params=new LinkedHashMap<>();
 private LinkedHashMap<String,Tuple<Double,Double>> AnalyticalModelParamsLimit=new LinkedHashMap<>();
-
+private boolean intiializeGradient = true;
 
 private double alphaMSA=1.9;//parameter for decreasing MSA step size
 private double gammaMSA=.1;//parameter for decreasing MSA step size
@@ -249,7 +249,7 @@ public void performTransitVehicleOverlay(AnalyticalModelNetwork network, Transit
 	logger.info("Completed transit vehicle overlay.");
 }
 
-public void generateRoutesAndOD(Population population,Network network,TransitSchedule transitSchedule,
+public void generateRoutesAndOD(Population population,Network network,Network odNetwork, TransitSchedule transitSchedule,
 		Scenario scenario,Map<String,FareCalculator> fareCalculator) {
 	this.scenario = scenario;
 	this.population = population;
@@ -258,7 +258,7 @@ public void generateRoutesAndOD(Population population,Network network,TransitSch
 //	Config odConfig=ConfigUtils.createConfig();
 //	odConfig.network().setInputFile("data/odNetwork.xml");
 	this.odPairs.generateOdSpecificRouteKeys();
-	Network odNetwork=NetworkUtils.readNetwork("data/tpusbNetwork.xml");//This is for creating ODpairs based on TPUSBs
+	//This is for creating ODpairs based on TPUSBs
 	this.odPairs.generateODpairsetSubPop(odNetwork);//This network has priority over the constructor network. This allows to use a od pair specific network 
 	this.odPairs.generateRouteandLinkIncidence(0.);
 	SignalFlowReductionGenerator sg=new SignalFlowReductionGenerator(scenario);
@@ -637,9 +637,9 @@ protected HashMap<Id<TransitLink>,Double> NetworkLoadingTransitSingleOD(Id<Analy
 				throw new IllegalArgumentException("Utility is NAN!!!");
 			}
 
-			if(u>300) {
-				logger.warn("STOP!!!Utility is too large >300");
-			}
+//			if(u>300) {
+//				logger.warn("STOP!!!Utility is too large >300");
+//			}
 			//odpair.updateTrRouteUtility(r.getTrRouteId(), u,timeBeanId);
 			utility.put(r.getTrRouteId(), u);
 
@@ -999,7 +999,7 @@ public void initializeGradients(LinkedHashMap<String,Double> Oparams) {
 		this.fareLinkGradient.put(timeId, new HashMap<>());
 		this.fareLinkGradient.get(timeId).putAll(this.fareLinkincidenceMatrix.get(timeId).keySet().parallelStream().collect(Collectors.toMap(kk->kk, kk->new HashMap<>(zeroGrad))));
 	}
-	
+	this.intiializeGradient = false;
 	logger.info("Finished initializing gradients");
 }
 
@@ -1015,7 +1015,7 @@ public void initializeGradients(LinkedHashMap<String,Double> Oparams) {
 public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,Double> oparams, LinkedHashMap<String,Double>anaParam) {
 
 	
-	if(counter == 1) {//maybe its better to do it once in the generate od pair and then not do it again 
+	if(this.intiializeGradient) {//maybe its better to do it once in the generate od pair and then not do it again 
 		this.initializeGradients(oparams);
 	}else {
 		//Calculate the travel time gradients
@@ -1514,6 +1514,15 @@ public Map<String, Map<String, Map<String, Double>>> getFareLinkGradient() {
 public Set<String> getGradientKeys() {
 	return gradientKeys;
 }
+
+public CNLODpairs getOdPairs() {
+	return odPairs;
+}
+
+public void setOdPairs(CNLODpairs odPairs) {
+	this.odPairs = odPairs;
+}
+
 
 
 

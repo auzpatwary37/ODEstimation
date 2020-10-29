@@ -1,5 +1,6 @@
 package core;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -14,6 +15,7 @@ import org.matsim.api.core.v01.Id;
 import org.matsim.api.core.v01.network.Link;
 
 import AnalyticalModel.ODDifferentiableSUEModel;
+import optimizer.VariableDetails;
 import population.TPUSB;
 import ust.hk.praisehk.metamodelcalibration.analyticalModel.AnalyticalModelODpair;
 import ust.hk.praisehk.metamodelcalibration.calibrator.ObjectiveCalculator;
@@ -25,6 +27,7 @@ public class ODUtils {
 	public static final String originaDestinationDemandVariableName = "ODDemand";
 	public static final String originaDestinationSubPopSepcificDemandVariableName = "ODDemandSubPop";
 	public static final String originaDestinationSubPopTimeSepcificDemandVariableName = "ODDemandSubPopTime";
+	public static final String originDestinationTimeSpecificDemandVariableName = "ODDemandTime";
 	public static final String OriginMultiplierVariableName = "originMultiplier";
 	public static final String DestinationMultiplierVariableName = "destinationMultiplier";
 	public static final String OriginDestinationMultiplierVariableName = "originDestinationMultipler";
@@ -32,8 +35,11 @@ public class ODUtils {
 	public static final String OriginMultiplierSubPopVaraibleName = "originSubPopMultiplier";
 	public static final String DestinationMultiplierSubPopVaraibleName = "destinationSubPopMultiplier";
 	public static final String originMultiplierTimeSpecificSubPopVariableName = "originSubTimeMultiplier";
+	public static final String originMultiplierTimeSpecificVariableName = "originTimeMultiplier";
 	public static final String destinationMultiplierTimeSpecificSubPopVariableName = "destinationSubTimeMultiplier";
+	public static final String destinationMultiplierTimeSpecificVariableName = "destinationTimeMultiplier";
 	public static final String origindestinationMultiplierTimeSpecificSubPopVariableName = "originDestinationSubTimeMultiplier";
+	public static final String origindestinationMultiplierTimeSpecificVariableName = "originDestinationTimeMultiplier";
 	
 	public static final Set<String> keySets = new HashSet<>(Arrays.asList(OriginMultiplierVariableName,DestinationMultiplierVariableName,OriginDestinationMultiplierVariableName,OriginDestinationSubPopMultiplierVariableName
 			,OriginMultiplierSubPopVaraibleName,DestinationMultiplierSubPopVaraibleName,originMultiplierTimeSpecificSubPopVariableName,destinationMultiplierTimeSpecificSubPopVariableName,origindestinationMultiplierTimeSpecificSubPopVariableName));
@@ -69,6 +75,14 @@ public class ODUtils {
 			return originaDestinationSubPopSepcificDemandVariableName+"___"+originId+"___"+destinationId+"___"+subPopulation;
 		case originaDestinationSubPopTimeSepcificDemandVariableName:
 			return originaDestinationSubPopTimeSepcificDemandVariableName+"___"+originId+"___"+destinationId+"___"+subPopulation+"___"+timeBeanId;
+		case originDestinationTimeSpecificDemandVariableName:
+			return originDestinationTimeSpecificDemandVariableName+"___"+originId+"___"+destinationId+"___"+timeBeanId;
+		case originMultiplierTimeSpecificVariableName:
+			return originMultiplierTimeSpecificVariableName+"___"+originId+"___"+timeBeanId;
+		case destinationMultiplierTimeSpecificVariableName:
+			return destinationMultiplierTimeSpecificVariableName+"___"+destinationId+"___"+timeBeanId;
+		case origindestinationMultiplierTimeSpecificVariableName:
+			return origindestinationMultiplierTimeSpecificVariableName+"___"+originId+"___"+destinationId+"___"+timeBeanId;
 		default:
 			throw new IllegalArgumentException("Input type: "+type+ "not recognized. Please use the static final string keys in the ODUtils class only.");	
 		}
@@ -119,9 +133,20 @@ public class ODUtils {
 					outTimeDemand.put(od.getKey(), m);
 				}
 				if((m =variables.get(createODMultiplierVariableName(od.getKey(),originaDestinationSubPopTimeSepcificDemandVariableName,timeDemand.getKey())))!=null) {
+					outTimeDemand.put(od.getKey(), m);
+				}
+				if((m =variables.get(createODMultiplierVariableName(od.getKey(),originDestinationTimeSpecificDemandVariableName,timeDemand.getKey())))!=null) {
+					outTimeDemand.put(od.getKey(), m);
+				}
+				if((m =variables.get(createODMultiplierVariableName(od.getKey(),originMultiplierTimeSpecificVariableName,timeDemand.getKey())))!=null) {
 					outTimeDemand.put(od.getKey(), outTimeDemand.get(od.getKey())*m);
 				}
-				
+				if((m =variables.get(createODMultiplierVariableName(od.getKey(),destinationMultiplierTimeSpecificVariableName,timeDemand.getKey())))!=null) {
+					outTimeDemand.put(od.getKey(), outTimeDemand.get(od.getKey())*m);
+				}
+				if((m =variables.get(createODMultiplierVariableName(od.getKey(),origindestinationMultiplierTimeSpecificVariableName,timeDemand.getKey())))!=null) {
+					outTimeDemand.put(od.getKey(), outTimeDemand.get(od.getKey())*m);
+				}
 			}
 		}
 		return outDemand;
@@ -184,12 +209,51 @@ public class ODUtils {
 					List<Id<Link>>links = (List<Id<Link>>)m.getAttribute(Measurement.linkListAttributeName);
 					for(Id<Link>l:links) {
 						for(Entry<String, Double> gd:model.getLinkGradient().get(timeId.getKey()).get(l).entrySet()){
-							grad.compute(gd.getKey(), (k,v)->v==null?gd.getValue():v+gd.getValue());
+							grad.compute(gd.getKey(), (k,v)->v==null?gd.getValue()*delta:v+gd.getValue()*delta);
 						}
 					}
 					//grad = model.getLinkGradient().get(timeId.getKey()).get()
 				}else if(type.equals(MeasurementType.fareLinkVolume)) {
 					grad = model.getFareLinkGradient().get(timeId.getKey()).get(m.getAttribute(Measurement.FareLinkAttributeName));
+					for(String k:grad.keySet())grad.put(k,grad.get(k)*delta);
+				}
+				for(String var:model.getGradientKeys()) {
+					outGrad.put(var, outGrad.get(var)+grad.get(var));
+				}
+			});
+		});
+		return outGrad;
+	}
+	
+	/**
+	 * The only way to parallelize it is to make variable parallelized
+	 * TODO: try that
+	 * @param realMeasurements
+	 * @param modelMeasurements
+	 * @param model
+	 * @return
+	 */
+	public static Map<String, Double> calcODObjectiveGradient(Measurements realMeasurements, Map<String,VariableDetails> variables, ODDifferentiableSUEModel model) {
+		LinkedHashMap<String,Double> params = new LinkedHashMap<>();
+		variables.values().stream().forEach(v->params.put(v.getVariableName(), v.getCurrentValue()));
+		Measurements modelMeasurements = model.perFormSUE(params, realMeasurements);
+		Map<String,Double> outGrad = model.getGradientKeys().stream().collect(Collectors.toMap(kk->kk, kk->0.));
+		realMeasurements.getMeasurements().values().forEach(m->{
+			m.getVolumes().entrySet().forEach(timeId->{
+				double delta = modelMeasurements.getMeasurements().get(m.getId()).getVolumes().get(timeId.getKey()) - timeId.getValue();
+				MeasurementType type = m.getMeasurementType();
+				Map<String,Double> grad = new HashMap<>();
+				if(type.equals(MeasurementType.linkVolume)) {
+					List<Id<Link>>links = (List<Id<Link>>)m.getAttribute(Measurement.linkListAttributeName);
+					for(Id<Link>l:links) {
+						for(Entry<String, Double> gd:model.getLinkGradient().get(timeId.getKey()).get(l).entrySet()){
+							grad.compute(gd.getKey(), (k,v)->v==null?gd.getValue()*delta:v+gd.getValue()*delta);
+						}
+					}
+					//grad = model.getLinkGradient().get(timeId.getKey()).get()
+				}else if(type.equals(MeasurementType.fareLinkVolume)) {
+					grad = model.getFareLinkGradient().get(timeId.getKey()).get(m.getAttribute(Measurement.FareLinkAttributeName));
+					for(String k:grad.keySet())grad.put(k,grad.get(k)*delta);
 				}
 				for(String var:model.getGradientKeys()) {
 					outGrad.put(var, outGrad.get(var)+grad.get(var));
