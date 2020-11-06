@@ -3,10 +3,12 @@ package AnalyticalModel;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -15,14 +17,31 @@ import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
 
 import org.junit.jupiter.api.Test;
+import org.matsim.api.core.v01.Id;
 import org.matsim.api.core.v01.Scenario;
 import org.matsim.api.core.v01.network.Network;
+import org.matsim.api.core.v01.population.Activity;
+import org.matsim.api.core.v01.population.Person;
+import org.matsim.api.core.v01.population.PlanElement;
 import org.matsim.core.config.Config;
 import org.matsim.core.config.ConfigUtils;
+import org.matsim.core.config.groups.PlanCalcScoreConfigGroup.ActivityParams;
+import org.matsim.core.config.groups.PlanCalcScoreConfigGroup.TypicalDurationScoreComputation;
 import org.matsim.core.network.NetworkUtils;
+import org.matsim.core.population.PopulationUtils;
+import org.matsim.core.scenario.MutableScenario;
 import org.matsim.core.scenario.ScenarioUtils;
 import org.matsim.core.utils.collections.Tuple;
+import org.matsim.utils.objectattributes.ObjectAttributes;
+import org.matsim.utils.objectattributes.ObjectAttributesXmlReader;
+import org.matsim.vehicles.Vehicle;
+import org.matsim.vehicles.VehicleType;
+import org.matsim.vehicles.VehicleUtils;
+import org.matsim.vehicles.VehicleWriterV1;
+import org.matsim.vehicles.Vehicles;
 import org.xml.sax.SAXException;
+
+import com.google.common.collect.Maps;
 
 import core.ODUtils;
 import createPTGTFS.FareCalculatorPTGTFS;
@@ -40,17 +59,32 @@ import ust.hk.praisehk.metamodelcalibration.measurements.MeasurementsReader;
 
 class ODDifferentiableSUEModelTest {
 
-	@Test
-	void testODDifferentiableSUEModel() {
+	//public static void main(String[] args) {
+	public static void main(String[] args) {
 		Measurements originalMeasurements = new MeasurementsReader().readMeasurements("fullHk/ATCMeasurementsPeakFuLLHK.xml");
 		Config config = ConfigUtils.createConfig();
-		ConfigUtils.loadConfig("new Data/cal/output_config.xml");
+		ConfigUtils.loadConfig("fullHk/output_config.xml");
 		config.transit().setTransitScheduleFile("fullHk/output_transitSchedule.xml.gz");
 		config.transit().setVehiclesFile("fullHk/output_transitVehicles.xml.gz");
-		config.vehicles().setVehiclesFile("fullHk/output_vehicles.xml.gz");
+		//config.vehicles().setVehiclesFile("fullHk/output_vehicles.xml.gz");
+		config.vehicles().setVehiclesFile("fullHk/vehicles_reduced.xml");
 		config.plans().setInputFile("fullHk/population_reduced.xml");
 		config.network().setInputFile("fullHk/output_network.xml.gz");
 		Scenario scenario = ScenarioUtils.loadScenario(config);
+		//Vehicles vehicles = VehicleUtils.createVehiclesContainer();
+		
+		ObjectAttributes obj = new ObjectAttributes();
+		new ObjectAttributesXmlReader(obj).readFile("fullHK/output_PersonAttributes.xml.gz");
+		//for(Entry<Id<VehicleType>, VehicleType> vt:scenario.getVehicles().getVehicleTypes().entrySet())vehicles.addVehicleType(vt.getValue());
+		for(Person person: scenario.getPopulation().getPersons().values()) {
+			String subPop = (String) obj.getAttribute(person.getId().toString(), "SUBPOP_ATTRIB_NAME");
+			PopulationUtils.putSubpopulation(person, subPop);
+			//vehicles.addVehicle(scenario.getVehicles().getVehicles().get(Id.createVehicleId(person.getId().toString())));
+		}
+		
+		//new VehicleWriterV1(vehicles).writeFile("fullHk/vehicles_reduced.xml");
+		//vehicles = null;
+		obj = null;
 		Map<String,FareCalculator>fareCalculators = new HashMap<>();
 		SAXParser saxParser;
 		ZonalFareXMLParserV2 busFareGetter = new ZonalFareXMLParserV2(scenario.getTransitSchedule());
@@ -80,12 +114,8 @@ class ODDifferentiableSUEModelTest {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
-		Map<String,Tuple<Double,Double>> timeBean = new HashMap<>();
-		for(int i = 0; i<24 ;i++) {
-			timeBean.put(Integer.toString(i+1), new Tuple<>(i*3600.,(i+1)*3600.));
-		}
-		Network odNetwork=NetworkUtils.readNetwork("new Data/data/odNetwork.xml");
-		ODDifferentiableSUEModel model = new ODDifferentiableSUEModel(timeBean, config);
+		Network odNetwork=NetworkUtils.readNetwork("fullHk/odNetwork.xml");
+		ODDifferentiableSUEModel model = new ODDifferentiableSUEModel(originalMeasurements.getTimeBean(), config);
 		model.generateRoutesAndOD(scenario.getPopulation(), scenario.getNetwork(), odNetwork, scenario.getTransitSchedule(), scenario, fareCalculators);
 		Set<String> uniqueVars = new HashSet<>();
 		
@@ -98,26 +128,18 @@ class ODDifferentiableSUEModelTest {
 		for(String k:uniqueVars)Param.put(k, new VariableDetails(k, new Tuple<Double,Double>(0.1,8.), 2.0));
 		Optimizer adam = new Adam("odOptim",Param,0.01,0.9,.999,10e-8);
 		for(int counter = 0;counter<100;counter++) {
-			System.out.println("KB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / 1024);
+			System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
 			LinkedHashMap<String,Double> params = new LinkedHashMap<>();
 			Param.values().stream().forEach(v->params.put(v.getVariableName(), v.getCurrentValue()));
 			Measurements modelMeasurements = model.perFormSUE(params, originalMeasurements);
 			Map<String,Double> grad = ODUtils.calcODObjectiveGradient(originalMeasurements, modelMeasurements, model);
 			Param = adam.takeStep(grad);
 			ObjectiveCalculator.calcObjective(originalMeasurements, modelMeasurements, ObjectiveCalculator.TypeMeasurementAndTimeSpecific);
-			System.out.println("KB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / 1024);
+			System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
 		}
-		fail("Not yet implemented");
 	}
 
-	@Test
-	void testGenerateRoutesAndOD() {
-		fail("Not yet implemented");
-	}
 
-	@Test
-	void testPerFormSUELinkedHashMapOfStringDoubleMeasurements() {
-		fail("Not yet implemented");
-	}
+	
 
 }

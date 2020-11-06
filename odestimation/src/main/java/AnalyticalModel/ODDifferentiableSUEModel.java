@@ -205,7 +205,9 @@ public ODDifferentiableSUEModel(Map<String, Tuple<Double, Double>> timeBean,Conf
 		this.trRouteProb.put(timeId, new ConcurrentHashMap<>());
 		this.expectedMaximumCarUtility.put(timeId, new ConcurrentHashMap<>());
 		this.expectedMaximumTrUtility.put(timeId, new ConcurrentHashMap<>());
-		
+		this.error.put(timeId, new ArrayList<>());
+		this.beta.put(timeId, new ArrayList<>());
+		this.error1.put(timeId, new ArrayList<>());
 		
 		//For result recording
 		outputLinkTT.put(timeId, new HashMap<>());
@@ -253,6 +255,7 @@ public void generateRoutesAndOD(Population population,Network network,Network od
 		Scenario scenario,Map<String,FareCalculator> fareCalculator) {
 	this.scenario = scenario;
 	this.population = population;
+	
 	//System.out.println("");
 	this.odPairs = new CNLODpairs(network,population,transitSchedule,scenario,this.timeBeans);
 //	Config odConfig=ConfigUtils.createConfig();
@@ -270,7 +273,7 @@ public void generateRoutesAndOD(Population population,Network network,Network od
 	}
 	this.fareCalculator = fareCalculator;
 	this.ts = transitSchedule;
-	
+	this.population.getPersons().values().forEach(p->p.getPlans().clear());
 	for(String timeBeanId:this.timeBeans.keySet()) {
 		this.consecutiveSUEErrorIncrease.put(timeBeanId, 0.);
 		this.Demand.put(timeBeanId, new HashMap<>(this.odPairs.getdemand(timeBeanId)));
@@ -341,6 +344,7 @@ private void createLinkRouteIncidence(){
 			});
 			this.trRouteODIncidence.compute(t, (k,v)->v==null?v=new HashMap<>():v);
 			this.trRouteODIncidence.get(t).put(od.getKey(), new ArrayList<>());
+			if(od.getValue().getTrRoutes(t)!=null) {
 			od.getValue().getTrRoutes(t).forEach(r->{
 				r.getFareLinks().forEach(fl->{
 					if(!fareLinkTimeRoutes.containsKey(fl.toString())){
@@ -350,6 +354,7 @@ private void createLinkRouteIncidence(){
 				});
 				this.trRouteODIncidence.get(t).get(od.getKey()).add(r.getTrRouteId());
 			});
+			}
 		
 		});
 	});
@@ -464,9 +469,11 @@ public SUEModelOutput singleTimeBeanTA(LinkedHashMap<String, Double> params,Link
 		//ConcurrentHashMap<String,HashMap<Id<CNLODpair>,Double>>demand=this.Demand;
 		linkCarVolume=this.performCarNetworkLoading(timeBeanId,i,params,anaParams);
 		linkTransitVolume=this.performTransitNetworkLoading(timeBeanId,i,params,anaParams);
+		System.out.println("Finished network loading.");
 		shouldStop=this.CheckConvergence(linkCarVolume, linkTransitVolume, this.tollerance, timeBeanId,i);
 		///the beta should already be calculated by this line. 
 		this.caclulateGradient(timeBeanId, i, params, anaParams);
+		System.out.println("Finished gradient Calculation");
 		
 		this.UpdateLinkVolume(linkCarVolume, linkTransitVolume, i, timeBeanId);
 		if(i==1 && shouldStop==true) {
@@ -677,7 +684,7 @@ protected HashMap<Id<TransitLink>,Double> NetworkLoadingTransitSingleOD(Id<Analy
 		for(AnalyticalModelTransitRoute r:incidence){
 			List<AnalyticalModelTransitRoute> routesFromOd=routes;
 			
-			if(CNLSUEModel.routeContain(routesFromOd, r)) {
+			if(routeContain(routesFromOd, r)) {
 				linkflow+=routeFlows.get(r.getTrRouteId());
 			}
 			if(Double.isNaN(linkflow)) {
@@ -689,6 +696,17 @@ protected HashMap<Id<TransitLink>,Double> NetworkLoadingTransitSingleOD(Id<Analy
 		}
 	}
 	return linkFlows;
+}
+
+public static boolean routeContain(List<AnalyticalModelTransitRoute> routesFromOd,AnalyticalModelTransitRoute route) {
+	
+	for(AnalyticalModelTransitRoute r:routesFromOd) {
+		if(r.getTrRouteId().equals(route.getTrRouteId())) {
+			route=r;
+			return true;
+		}
+	}
+	return false;
 }
 
 /**
@@ -1190,7 +1208,7 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 			this.fareLinkGradient.get(timeId).get(linkId.getKey()).put(var, grad);
 		}
 	});
-	
+	logger.info("Finished Calulating Gradient.");
 }
 
 
