@@ -100,7 +100,7 @@ private Map<String,Map<Id<TransitLink>,TransitLink>> transitLinks=new Concurrent
 	
 private Population lastPopulation;
 
-
+private Map<String,Map<String,Double>> suPopSpecificParam = new ConcurrentHashMap<>();
 //Internal database for the utility, mode choice and utility
 
 private Map<String,Map<Id<AnalyticalModelRoute>,Double>> routeUtilities = new HashMap<>();
@@ -360,42 +360,55 @@ private void createLinkRouteIncidence(){
 	});
 	
 }
-
+/**
+ * This will not deal with any param containing sub population name or All
+ * This hampers in time so currently is turned off
+ * @param params
+ * @param subPopulation
+ * @param config
+ * @return
+ */
 private LinkedHashMap<String,Double> handleBasicParams(LinkedHashMap<String,Double> params, String subPopulation, Config config){
 	LinkedHashMap<String,Double> newParams = new LinkedHashMap<>();
 	// Handle the original params first
-	for(String s:params.keySet()) {
-		if(subPopulation!=null && (s.contains(subPopulation)||s.contains("All"))) {
-			newParams.put(s.split(" ")[1],params.get(s));
-		}else if (subPopulation == null) {
-			newParams.put(s, params.get(s));
-		}else if(subPopulation!=null) {//this will allow the unknown param to enter
-			newParams.put(s, params.get(s));
-		}
+//	for(String s:params.keySet()) {
+//		if(subPopulation!=null && (s.contains(subPopulation)||s.contains("All"))) {
+//			newParams.put(s.split(" ")[1],params.get(s));
+//		}else if (subPopulation == null) {
+//			newParams.put(s, params.get(s));
+//		}else if(subPopulation!=null) {//this will allow the unknown param to enter
+//			newParams.put(s, params.get(s));
+//		}
+//	}
+	if(!this.suPopSpecificParam.containsKey(subPopulation)) {
+		ScoringParameters scParam = new ScoringParameters.Builder(config.planCalcScore(), config.planCalcScore().getScoringParameters(subPopulation), config.scenario()).build();
+		
+		newParams.compute(CNLSUEModel.MarginalUtilityofTravelCarName,(k,v)->v==null?scParam.modeParams.get("car").marginalUtilityOfTraveling_s*3600:v);
+		newParams.compute(CNLSUEModel.MarginalUtilityofDistanceCarName, (k,v)->v==null?scParam.modeParams.get("car").marginalUtilityOfDistance_m:v);
+		newParams.compute(CNLSUEModel.MarginalUtilityofMoneyName, (k,v)->v==null?scParam.marginalUtilityOfMoney:v);
+		newParams.compute(CNLSUEModel.DistanceBasedMoneyCostCarName, (k,v)->v==null?scParam.modeParams.get("car").monetaryDistanceCostRate:v);
+		newParams.compute(CNLSUEModel.MarginalUtilityofTravelptName, (k,v)->v==null?scParam.modeParams.get("pt").marginalUtilityOfTraveling_s*3600:v);
+		newParams.compute(CNLSUEModel.MarginalUtilityOfDistancePtName, (k,v)->v==null?scParam.modeParams.get("pt").marginalUtilityOfDistance_m:v);
+		newParams.compute(CNLSUEModel.MarginalUtilityofWaitingName, (k,v)->v==null?scParam.marginalUtilityOfWaitingPt_s*3600:v);
+		newParams.compute(CNLSUEModel.UtilityOfLineSwitchName, (k,v)->v==null?scParam.utilityOfLineSwitch:v);
+		newParams.compute(CNLSUEModel.MarginalUtilityOfWalkingName, (k,v)->v==null?scParam.modeParams.get("walk").marginalUtilityOfTraveling_s*3600:v);
+		newParams.compute(CNLSUEModel.DistanceBasedMoneyCostWalkName, (k,v)->v==null?scParam.modeParams.get("walk").monetaryDistanceCostRate:v);
+		newParams.compute(CNLSUEModel.ModeConstantCarName, (k,v)->v==null?scParam.modeParams.get("car").constant:v);
+		newParams.compute(CNLSUEModel.ModeConstantPtname, (k,v)->v==null?scParam.modeParams.get("pt").constant:v);
+		newParams.compute(CNLSUEModel.MarginalUtilityofPerformName, (k,v)->v==null?scParam.marginalUtilityOfPerforming_s*3600:v);
+		
+		newParams.compute(CNLSUEModel.CapacityMultiplierName, (k,v)->v==null?config.qsim().getFlowCapFactor():v);
+		this.suPopSpecificParam.put(subPopulation, newParams);
+		
 	}
-	ScoringParameters scParam = new ScoringParameters.Builder(config.planCalcScore(), config.planCalcScore().getScoringParameters(subPopulation), config.scenario()).build();
-	
-	newParams.compute(CNLSUEModel.MarginalUtilityofTravelCarName,(k,v)->v==null?scParam.modeParams.get("car").marginalUtilityOfTraveling_s*3600:v);
-	newParams.compute(CNLSUEModel.MarginalUtilityofDistanceCarName, (k,v)->v==null?scParam.modeParams.get("car").marginalUtilityOfDistance_m:v);
-	newParams.compute(CNLSUEModel.MarginalUtilityofMoneyName, (k,v)->v==null?scParam.marginalUtilityOfMoney:v);
-	newParams.compute(CNLSUEModel.DistanceBasedMoneyCostCarName, (k,v)->v==null?scParam.modeParams.get("car").monetaryDistanceCostRate:v);
-	newParams.compute(CNLSUEModel.MarginalUtilityofTravelptName, (k,v)->v==null?scParam.modeParams.get("pt").marginalUtilityOfTraveling_s*3600:v);
-	newParams.compute(CNLSUEModel.MarginalUtilityOfDistancePtName, (k,v)->v==null?scParam.modeParams.get("pt").marginalUtilityOfDistance_m:v);
-	newParams.compute(CNLSUEModel.MarginalUtilityofWaitingName, (k,v)->v==null?scParam.marginalUtilityOfWaitingPt_s*3600:v);
-	newParams.compute(CNLSUEModel.UtilityOfLineSwitchName, (k,v)->v==null?scParam.utilityOfLineSwitch:v);
-	newParams.compute(CNLSUEModel.MarginalUtilityOfWalkingName, (k,v)->v==null?scParam.modeParams.get("walk").marginalUtilityOfTraveling_s*3600:v);
-	newParams.compute(CNLSUEModel.DistanceBasedMoneyCostWalkName, (k,v)->v==null?scParam.modeParams.get("walk").monetaryDistanceCostRate:v);
-	newParams.compute(CNLSUEModel.ModeConstantCarName, (k,v)->v==null?scParam.modeParams.get("car").constant:v);
-	newParams.compute(CNLSUEModel.ModeConstantPtname, (k,v)->v==null?scParam.modeParams.get("pt").constant:v);
-	newParams.compute(CNLSUEModel.MarginalUtilityofPerformName, (k,v)->v==null?scParam.marginalUtilityOfPerforming_s*3600:v);
-	
-	newParams.compute(CNLSUEModel.CapacityMultiplierName, (k,v)->v==null?config.qsim().getFlowCapFactor():v);
-	
-	return newParams;
+	this.suPopSpecificParam.get(subPopulation).entrySet().forEach(pp->{
+		params.compute(pp.getKey(), (k,v)->v==null?pp.getValue():v);
+	});
+	return params;
 }
 
 public Measurements perFormSUE(LinkedHashMap<String, Double> params,Measurements originalMeasurements) {
-	ODUtils.applyODPairMultiplier(this.Demand, params);
+	ODUtils.applyODPairMultiplier(this.Demand, params,this.odPairs.getODpairset());
 	return this.performAssignment(params, this.AnalyticalModelInternalParams,originalMeasurements);
 }
 
@@ -448,6 +461,7 @@ private SUEModelOutput performAssignment( LinkedHashMap<String,Double> params, L
 	//this.resetCarDemand();
 	for(String timeId:this.timeBeans.keySet()) {
 		SUEModelOutput flowOut = this.singleTimeBeanTA(params, anaParams, timeId);
+		
 		flow.getLinkVolume().putAll(flowOut.getLinkVolume());
 		flow.getLinkTravelTime().putAll(flowOut.getLinkTravelTime());
 		flow.getLinkTransitVolume().putAll(flowOut.getLinkTransitVolume());
@@ -470,6 +484,7 @@ public SUEModelOutput singleTimeBeanTA(LinkedHashMap<String, Double> params,Link
 		linkCarVolume=this.performCarNetworkLoading(timeBeanId,i,params,anaParams);
 		linkTransitVolume=this.performTransitNetworkLoading(timeBeanId,i,params,anaParams);
 		System.out.println("Finished network loading.");
+		System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
 		shouldStop=this.CheckConvergence(linkCarVolume, linkTransitVolume, this.tollerance, timeBeanId,i);
 		///the beta should already be calculated by this line. 
 		this.caclulateGradient(timeBeanId, i, params, anaParams);
@@ -1035,6 +1050,8 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 	
 	if(this.intiializeGradient) {//maybe its better to do it once in the generate od pair and then not do it again 
 		this.initializeGradients(oparams);
+		System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
+		
 	}else {
 		//Calculate the travel time gradients
 		this.linkTTGradient.get(timeId).entrySet().parallelStream().forEach(linkGradientMap-> {
@@ -1157,7 +1174,7 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 				double pr = this.routeProb.get(timeId).get(rId.getKey());
 				double term0 = pm*d*pr*anaParam.get(CNLSUEModel.LinkMiuName)*(rId.getValue()-carUGrad);
 				double term1 = pr*d*pm*anaParam.get(CNLSUEModel.ModeMiuName)*(carUGrad-modeConst);
-				double term2 = pr*pm*ODUtils.ifMatch_1_else_0(od.getKey(), timeId, var)*d/params.get(var);
+				double term2 = pr*pm*ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var)*d/params.get(var);
 				double grad = term0 + term1 + term2;
 				this.routeFlowGradient.get(timeId).get(rId.getKey()).put(var, grad);
 			}
@@ -1166,7 +1183,7 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 				double pr = this.trRouteProb.get(timeId).get(trUGrad.getKey());
 				double term0 = (1-pm)*d*pr*anaParam.get(CNLSUEModel.LinkMiuName)*(trUGrad.getValue()-trUGradient);
 				double term1 = pr*d*(1-pm)*anaParam.get(CNLSUEModel.ModeMiuName)*(trUGradient-modeConst);
-				double term2 = pr*(1-pm)*ODUtils.ifMatch_1_else_0(od.getKey(), timeId, var)*d/params.get(var);
+				double term2 = pr*(1-pm)*ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var)*d/params.get(var);
 				double grad = term0 + term1 + term2;
 				this.trRouteFlowGradient.get(timeId).get(trUGrad.getKey()).put(var, grad);
 			}

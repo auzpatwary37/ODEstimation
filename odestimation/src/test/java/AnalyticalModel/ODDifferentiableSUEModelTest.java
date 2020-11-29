@@ -54,6 +54,7 @@ import optimizer.Adam;
 import optimizer.Optimizer;
 import optimizer.VariableDetails;
 import ust.hk.praisehk.metamodelcalibration.calibrator.ObjectiveCalculator;
+import ust.hk.praisehk.metamodelcalibration.measurements.Measurement;
 import ust.hk.praisehk.metamodelcalibration.measurements.Measurements;
 import ust.hk.praisehk.metamodelcalibration.measurements.MeasurementsReader;
 
@@ -62,6 +63,7 @@ class ODDifferentiableSUEModelTest {
 	//public static void main(String[] args) {
 	public static void main(String[] args) {
 		Measurements originalMeasurements = new MeasurementsReader().readMeasurements("fullHk/ATCMeasurementsPeakFuLLHK.xml");
+		Map<String,Measurements> timeSplitMeasurements=timeSplitMeasurements(originalMeasurements);
 		Config config = ConfigUtils.createConfig();
 		ConfigUtils.loadConfig("fullHk/output_config.xml");
 		config.transit().setTransitScheduleFile("fullHk/output_transitSchedule.xml.gz");
@@ -115,31 +117,53 @@ class ODDifferentiableSUEModelTest {
 			e.printStackTrace();
 		}
 		Network odNetwork=NetworkUtils.readNetwork("fullHk/odNetwork.xml");
-		ODDifferentiableSUEModel model = new ODDifferentiableSUEModel(originalMeasurements.getTimeBean(), config);
-		model.generateRoutesAndOD(scenario.getPopulation(), scenario.getNetwork(), odNetwork, scenario.getTransitSchedule(), scenario, fareCalculators);
-		Set<String> uniqueVars = new HashSet<>();
-		
-		for(String timeId:originalMeasurements.getTimeBean().keySet()) {
-			model.getOdPairs().getODpairset().keySet().forEach(k->{
-				uniqueVars.add(ODUtils.createODMultiplierVariableName(k,ODUtils.origindestinationMultiplierTimeSpecificVariableName, timeId));
-			});
-		}
-		Map<String,VariableDetails> Param = new HashMap<>();
-		for(String k:uniqueVars)Param.put(k, new VariableDetails(k, new Tuple<Double,Double>(0.1,8.), 2.0));
-		Optimizer adam = new Adam("odOptim",Param,0.01,0.9,.999,10e-8);
-		for(int counter = 0;counter<100;counter++) {
-			System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
-			LinkedHashMap<String,Double> params = new LinkedHashMap<>();
-			Param.values().stream().forEach(v->params.put(v.getVariableName(), v.getCurrentValue()));
-			Measurements modelMeasurements = model.perFormSUE(params, originalMeasurements);
-			Map<String,Double> grad = ODUtils.calcODObjectiveGradient(originalMeasurements, modelMeasurements, model);
-			Param = adam.takeStep(grad);
-			ObjectiveCalculator.calcObjective(originalMeasurements, modelMeasurements, ObjectiveCalculator.TypeMeasurementAndTimeSpecific);
-			System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
+		for(Entry<String,Tuple<Double,Double>>timeBean:originalMeasurements.getTimeBean().entrySet()) {
+			Map<String,Tuple<Double,Double>> singleTimeBean = new HashMap<>();
+			singleTimeBean.put(timeBean.getKey(),timeBean.getValue());
+			ODDifferentiableSUEModel model = new ODDifferentiableSUEModel(singleTimeBean, config);
+			model.generateRoutesAndOD(scenario.getPopulation(), scenario.getNetwork(), odNetwork, scenario.getTransitSchedule(), scenario, fareCalculators);
+			Set<String> uniqueVars = new HashSet<>();
+			
+			for(String timeId:originalMeasurements.getTimeBean().keySet()) {
+				model.getOdPairs().getODpairset().entrySet().forEach(k->{
+					uniqueVars.add(ODUtils.createODMultiplierVariableName(k.getKey(),k.getValue().getSubPopulation(), ODUtils.OriginDestinationMultiplierVariableName, timeId));
+				});
+			}
+			Map<String,VariableDetails> Param = new HashMap<>();
+			for(String k:uniqueVars)Param.put(k, new VariableDetails(k, new Tuple<Double,Double>(0.1,8.), 2.0));
+			Optimizer adam = new Adam("odOptim",Param,0.01,0.9,.999,10e-8);
+			for(int counter = 0;counter<100;counter++) {
+				System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
+				LinkedHashMap<String,Double> params = new LinkedHashMap<>();
+				Param.values().stream().forEach(v->params.put(v.getVariableName(), v.getCurrentValue()));
+				Measurements modelMeasurements = model.perFormSUE(params, originalMeasurements);
+				Map<String,Double> grad = ODUtils.calcODObjectiveGradient(originalMeasurements, modelMeasurements, model);
+				Param = adam.takeStep(grad);
+				ObjectiveCalculator.calcObjective(originalMeasurements, modelMeasurements, ObjectiveCalculator.TypeMeasurementAndTimeSpecific);
+				System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
+			}
 		}
 	}
 
-
 	
-
+	private static Map<String,Measurements> timeSplitMeasurements(Measurements m){
+		Map<String,Measurements> mOuts=new HashMap<>();
+		for(String timeId:m.getTimeBean().keySet()) {
+			Map<String,Tuple<Double,Double>> singleBeanTimeBean=new HashMap<>();
+			singleBeanTimeBean.put(timeId, m.getTimeBean().get(timeId));
+			Measurements mt=Measurements.createMeasurements(singleBeanTimeBean);
+			mOuts.put(timeId, mt);
+			for(Entry<Id<Measurement>, Measurement> d:m.getMeasurements().entrySet()) {
+				if(d.getValue().getVolumes().containsKey(timeId)) {
+					mt.createAnadAddMeasurement(d.getKey().toString(), d.getValue().getMeasurementType());
+					for(Entry<String, Object> attribue:d.getValue().getAttributes().entrySet()) {
+						mt.getMeasurements().get(d.getKey()).setAttribute(attribue.getKey(), attribue.getValue());
+					}
+					mt.getMeasurements().get(d.getKey()).putVolume(timeId, d.getValue().getVolumes().get(timeId));
+				}
+			}
+		}
+		
+		return mOuts;
+	}
 }
