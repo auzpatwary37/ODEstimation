@@ -11,6 +11,8 @@ import java.util.Map.Entry;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.apache.commons.math3.linear.MatrixUtils;
+import org.apache.commons.math3.linear.RealVector;
 import org.matsim.api.core.v01.Id;
 import org.matsim.api.core.v01.network.Link;
 
@@ -218,32 +220,69 @@ public class ODUtils {
 	 * @param model
 	 * @return
 	 */
+//	public static Map<String, Double> calcODObjectiveGradient(Measurements realMeasurements, Measurements modelMeasurements, ODDifferentiableSUEModel model) {
+//		Map<String,Double> outGrad = model.getGradientKeys().stream().collect(Collectors.toMap(kk->kk, kk->0.));
+//		realMeasurements.getMeasurements().values().forEach(m->{
+//			m.getVolumes().entrySet().forEach(timeId->{
+//				double delta = modelMeasurements.getMeasurements().get(m.getId()).getVolumes().get(timeId.getKey()) - timeId.getValue();
+//				MeasurementType type = m.getMeasurementType();
+//				Map<String,Double> grad = new HashMap<>();
+//				if(type.equals(MeasurementType.linkVolume)) {
+//					List<Id<Link>>links = (List<Id<Link>>)m.getAttribute(Measurement.linkListAttributeName);
+//					for(Id<Link>l:links) {
+//						//for(Entry<String, Double> gd:model.getLinkGradient().get(timeId.getKey()).get(l).entrySet()){
+//						for(Entry<String, Double> gd:model.getLinkGradient().get(timeId.getKey()).get(l).entrySet()){
+//							grad.compute(gd.getKey(), (k,v)->v==null?gd.getValue()*delta:v+gd.getValue()*delta);
+//						}
+//					}
+//					//grad = model.getLinkGradient().get(timeId.getKey()).get()
+//				}else if(type.equals(MeasurementType.fareLinkVolume)) {
+//					grad = model.getFareLinkGradient().get(timeId.getKey()).get(m.getAttribute(Measurement.FareLinkAttributeName));
+//					for(String k:grad.keySet())grad.put(k,grad.get(k)*delta);
+//				}
+//				for(String var:model.getGradientKeys()) {
+//					outGrad.put(var, outGrad.get(var)+grad.get(var));
+//				}
+//			});
+//		});
+//		return outGrad;
+//	}
+//	
+	
+	
 	public static Map<String, Double> calcODObjectiveGradient(Measurements realMeasurements, Measurements modelMeasurements, ODDifferentiableSUEModel model) {
-		Map<String,Double> outGrad = model.getGradientKeys().stream().collect(Collectors.toMap(kk->kk, kk->0.));
-		realMeasurements.getMeasurements().values().forEach(m->{
-			m.getVolumes().entrySet().forEach(timeId->{
+		//Map<String,Double> outGrad = model.getGradientKeys().stream().collect(Collectors.toMap(kk->kk, kk->0.));
+		RealVector outGrad = MatrixUtils.createRealVector(new double[model.getGradientKeys().size()]);
+		for(Measurement m:realMeasurements.getMeasurements().values()){
+			for(Entry<String, Double> timeId:m.getVolumes().entrySet()){
 				double delta = modelMeasurements.getMeasurements().get(m.getId()).getVolumes().get(timeId.getKey()) - timeId.getValue();
 				MeasurementType type = m.getMeasurementType();
-				Map<String,Double> grad = new HashMap<>();
+				//Map<String,Double> grad = new HashMap<>();
+				RealVector g = MatrixUtils.createRealVector(new double[outGrad.toArray().length]);
 				if(type.equals(MeasurementType.linkVolume)) {
 					List<Id<Link>>links = (List<Id<Link>>)m.getAttribute(Measurement.linkListAttributeName);
 					for(Id<Link>l:links) {
-						for(Entry<String, Double> gd:model.getLinkGradient().get(timeId.getKey()).get(l).entrySet()){
-							grad.compute(gd.getKey(), (k,v)->v==null?gd.getValue()*delta:v+gd.getValue()*delta);
-						}
+						//for(Entry<String, Double> gd:model.getLinkGradient().get(timeId.getKey()).get(l).entrySet()){
+//						for(Entry<String, Double> gd:model.getLinkGradient().get(timeId.getKey()).get(l).entrySet()){
+//							grad.compute(gd.getKey(), (k,v)->v==null?gd.getValue()*delta:v+gd.getValue()*delta);
+//						}
+						g = g.add(MatrixUtils.createRealVector(model.getLinkGradient().get(timeId.getKey()).get(l)).mapMultiplyToSelf(delta));
 					}
 					//grad = model.getLinkGradient().get(timeId.getKey()).get()
 				}else if(type.equals(MeasurementType.fareLinkVolume)) {
-					grad = model.getFareLinkGradient().get(timeId.getKey()).get(m.getAttribute(Measurement.FareLinkAttributeName));
-					for(String k:grad.keySet())grad.put(k,grad.get(k)*delta);
+//					grad = model.getFareLinkGradient().get(timeId.getKey()).get(m.getAttribute(Measurement.FareLinkAttributeName));
+//					for(String k:grad.keySet())grad.put(k,grad.get(k)*delta);
+					g = g.add(MatrixUtils.createRealVector(model.getFareLinkGradient().get(timeId.getKey()).get(m.getAttribute(Measurement.FareLinkAttributeName))).mapMultiplyToSelf(delta));
 				}
-				for(String var:model.getGradientKeys()) {
-					outGrad.put(var, outGrad.get(var)+grad.get(var));
-				}
-			});
-		});
-		return outGrad;
+//				for(String var:model.getGradientKeys()) {
+//					outGrad.put(var, outGrad.get(var)+grad.get(var));
+//				}
+				outGrad = outGrad.add(g);
+			}
+		}
+		return model.getGradientArray().getMap(outGrad.toArray());
 	}
+	
 	
 	/**
 	 * The only way to parallelize it is to make variable parallelized
@@ -253,33 +292,65 @@ public class ODUtils {
 	 * @param model
 	 * @return
 	 */
+//	public static Map<String, Double> calcODObjectiveGradient(Measurements realMeasurements, Map<String,VariableDetails> variables, ODDifferentiableSUEModel model) {
+//		LinkedHashMap<String,Double> params = new LinkedHashMap<>();
+//		variables.values().stream().forEach(v->params.put(v.getVariableName(), v.getCurrentValue()));
+//		Measurements modelMeasurements = model.perFormSUE(params, realMeasurements);
+//		Map<String,Double> outGrad = model.getGradientKeys().stream().collect(Collectors.toMap(kk->kk, kk->0.));
+//		realMeasurements.getMeasurements().values().forEach(m->{
+//			m.getVolumes().entrySet().forEach(timeId->{
+//				double delta = modelMeasurements.getMeasurements().get(m.getId()).getVolumes().get(timeId.getKey()) - timeId.getValue();
+//				MeasurementType type = m.getMeasurementType();
+//				Map<String,Double> grad = new HashMap<>();
+//				if(type.equals(MeasurementType.linkVolume)) {
+//					List<Id<Link>>links = (List<Id<Link>>)m.getAttribute(Measurement.linkListAttributeName);
+//					for(Id<Link>l:links) {
+//						for(Entry<String, Double> gd:model.getLinkGradient().get(timeId.getKey()).get(l).entrySet()){
+//							grad.compute(gd.getKey(), (k,v)->v==null?gd.getValue()*delta:v+gd.getValue()*delta);
+//						}
+//					}
+//					//grad = model.getLinkGradient().get(timeId.getKey()).get()
+//				}else if(type.equals(MeasurementType.fareLinkVolume)) {
+//					grad = model.getFareLinkGradient().get(timeId.getKey()).get(m.getAttribute(Measurement.FareLinkAttributeName));
+//					for(String k:grad.keySet())grad.put(k,grad.get(k)*delta);
+//				}
+//				for(String var:model.getGradientKeys()) {
+//					outGrad.put(var, outGrad.get(var)+grad.get(var));
+//				}
+//			});
+//		});
+//		return outGrad;
+//	}
+	
+	
 	public static Map<String, Double> calcODObjectiveGradient(Measurements realMeasurements, Map<String,VariableDetails> variables, ODDifferentiableSUEModel model) {
 		LinkedHashMap<String,Double> params = new LinkedHashMap<>();
 		variables.values().stream().forEach(v->params.put(v.getVariableName(), v.getCurrentValue()));
 		Measurements modelMeasurements = model.perFormSUE(params, realMeasurements);
-		Map<String,Double> outGrad = model.getGradientKeys().stream().collect(Collectors.toMap(kk->kk, kk->0.));
-		realMeasurements.getMeasurements().values().forEach(m->{
-			m.getVolumes().entrySet().forEach(timeId->{
-				double delta = modelMeasurements.getMeasurements().get(m.getId()).getVolumes().get(timeId.getKey()) - timeId.getValue();
-				MeasurementType type = m.getMeasurementType();
-				Map<String,Double> grad = new HashMap<>();
-				if(type.equals(MeasurementType.linkVolume)) {
-					List<Id<Link>>links = (List<Id<Link>>)m.getAttribute(Measurement.linkListAttributeName);
-					for(Id<Link>l:links) {
-						for(Entry<String, Double> gd:model.getLinkGradient().get(timeId.getKey()).get(l).entrySet()){
-							grad.compute(gd.getKey(), (k,v)->v==null?gd.getValue()*delta:v+gd.getValue()*delta);
-						}
-					}
-					//grad = model.getLinkGradient().get(timeId.getKey()).get()
-				}else if(type.equals(MeasurementType.fareLinkVolume)) {
-					grad = model.getFareLinkGradient().get(timeId.getKey()).get(m.getAttribute(Measurement.FareLinkAttributeName));
-					for(String k:grad.keySet())grad.put(k,grad.get(k)*delta);
-				}
-				for(String var:model.getGradientKeys()) {
-					outGrad.put(var, outGrad.get(var)+grad.get(var));
-				}
-			});
-		});
-		return outGrad;
+		return ODUtils.calcODObjectiveGradient(realMeasurements, modelMeasurements, model);
+//		Map<String,Double> outGrad = model.getGradientKeys().stream().collect(Collectors.toMap(kk->kk, kk->0.));
+//		realMeasurements.getMeasurements().values().forEach(m->{
+//			m.getVolumes().entrySet().forEach(timeId->{
+//				double delta = modelMeasurements.getMeasurements().get(m.getId()).getVolumes().get(timeId.getKey()) - timeId.getValue();
+//				MeasurementType type = m.getMeasurementType();
+//				Map<String,Double> grad = new HashMap<>();
+//				if(type.equals(MeasurementType.linkVolume)) {
+//					List<Id<Link>>links = (List<Id<Link>>)m.getAttribute(Measurement.linkListAttributeName);
+//					for(Id<Link>l:links) {
+//						for(Entry<String, Double> gd:model.getLinkGradient().get(timeId.getKey()).get(l).entrySet()){
+//							grad.compute(gd.getKey(), (k,v)->v==null?gd.getValue()*delta:v+gd.getValue()*delta);
+//						}
+//					}
+//					//grad = model.getLinkGradient().get(timeId.getKey()).get()
+//				}else if(type.equals(MeasurementType.fareLinkVolume)) {
+//					grad = model.getFareLinkGradient().get(timeId.getKey()).get(m.getAttribute(Measurement.FareLinkAttributeName));
+//					for(String k:grad.keySet())grad.put(k,grad.get(k)*delta);
+//				}
+//				for(String var:model.getGradientKeys()) {
+//					outGrad.put(var, outGrad.get(var)+grad.get(var));
+//				}
+//			});
+//		});
+//		return outGrad;
 	}
 }
