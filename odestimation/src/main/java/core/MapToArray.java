@@ -1,6 +1,9 @@
 package core;
 
 import java.util.List;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.HashMap;
@@ -45,9 +48,16 @@ public Map<T,Double> extractMap(double[] matrix, Set<T> key){
 }
 
 public double[] getMatrix(Map<T,Double> map) {
+//	if(map.size()!=this.keySet.size()) {
+//		System.out.println("Keyset size = "+this.keySet.size()+" and map size = "+map.size());
+//		throw new IllegalArgumentException("dimension mismatch!!!");
+//	}
 	double[] out = new double[keySet.size()];
 	for(int i = 0;i<this.keySet.size();i++) {
-		out[i] = map.get(this.keySet.get(i));
+		if( map.get(this.keySet.get(i))!=null) {
+			out[i] = map.get(this.keySet.get(i));
+		}
+		
 	}
 	return out;
 }
@@ -62,6 +72,29 @@ public String getId() {
 
 public RealVector getRealVector(Map<T,Double> map) {
 	return MatrixUtils.createRealVector(this.getMatrix(map));
+}
+
+public void writeCSV(Map<String,double[]> mapToWrite,String fileLoc) {
+	List<String> fieldKeys = new ArrayList<>(mapToWrite.keySet());
+	try {
+		FileWriter fw = new FileWriter(new File(fileLoc));
+		//append header
+		fw.append("Keys");
+		for(String k:fieldKeys)fw.append(","+k.toString());
+		fw.append("\n");
+		fw.flush();
+		for(int i = 0;i<this.keySet.size();i++) {
+			fw.append(this.keySet.get(i).toString());
+			for(String fk:fieldKeys)fw.append(","+mapToWrite.get(fk)[i]);
+			fw.append("\n");
+			fw.flush();
+		}
+		fw.close();
+		
+	} catch (IOException e) {
+		// TODO Auto-generated catch block
+		e.printStackTrace();
+	}
 }
 
 }

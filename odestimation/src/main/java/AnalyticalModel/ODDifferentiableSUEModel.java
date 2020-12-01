@@ -277,9 +277,10 @@ public void generateRoutesAndOD(Population population,Network network,Network od
 	this.odPairs = new CNLODpairs(network,population,transitSchedule,scenario,this.timeBeans);
 //	Config odConfig=ConfigUtils.createConfig();
 //	odConfig.network().setInputFile("data/odNetwork.xml");
-	this.odPairs.generateOdSpecificRouteKeys();
+
 	//This is for creating ODpairs based on TPUSBs
 	this.odPairs.generateODpairsetSubPop(odNetwork);//This network has priority over the constructor network. This allows to use a od pair specific network 
+	this.odPairs.generateOdSpecificRouteKeys();
 	this.odPairs.generateRouteandLinkIncidence(0.);
 	SignalFlowReductionGenerator sg=new SignalFlowReductionGenerator(scenario);
 	for(String s:this.timeBeans.keySet()) {
@@ -385,8 +386,8 @@ private void createLinkRouteIncidence(){
  * @param config
  * @return
  */
-private LinkedHashMap<String,Double> handleBasicParams(LinkedHashMap<String,Double> params, String subPopulation, Config config){
-	LinkedHashMap<String,Double> newParams = new LinkedHashMap<>();
+private LinkedHashMap<String,Double> handleBasicParams(LinkedHashMap<String,Double> oldparams, String subPopulation, Config config){
+	LinkedHashMap<String,Double> params = new LinkedHashMap<>(oldparams);
 	// Handle the original params first
 //	for(String s:params.keySet()) {
 //		if(subPopulation!=null && (s.contains(subPopulation)||s.contains("All"))) {
@@ -398,6 +399,7 @@ private LinkedHashMap<String,Double> handleBasicParams(LinkedHashMap<String,Doub
 //		}
 //	}
 	if(!this.suPopSpecificParam.containsKey(subPopulation)) {
+		LinkedHashMap<String,Double> newParams = new LinkedHashMap<>();
 		ScoringParameters scParam = new ScoringParameters.Builder(config.planCalcScore(), config.planCalcScore().getScoringParameters(subPopulation), config.scenario()).build();
 		
 		newParams.compute(CNLSUEModel.MarginalUtilityofTravelCarName,(k,v)->v==null?scParam.modeParams.get("car").marginalUtilityOfTraveling_s*3600:v);
@@ -653,7 +655,9 @@ protected HashMap<Id<TransitLink>,Double> NetworkLoadingTransitSingleOD(Id<Analy
 	
 	AnalyticalModelODpair odpair=this.odPairs.getODpairset().get(ODpairId);
 	List<AnalyticalModelTransitRoute> routes=odpair.getTrRoutes(timeBeanId);
-	
+	if(odpair.getODpairId().toString().equals("227014.0_624041.0_person_TCSwithoutCar")) {
+		logger.debug("debug here.");
+	}
 	HashMap<Id<AnalyticalModelTransitRoute>,Double> routeFlows=new HashMap<>();
 	HashMap<Id<TransitLink>,Double> linkFlows=new HashMap<>();
 	String subPopulation = odpair.getSubPopulation();
@@ -680,6 +684,17 @@ protected HashMap<Id<TransitLink>,Double> NetworkLoadingTransitSingleOD(Id<Analy
 //				logger.warn("STOP!!!Utility is too large >300");
 //			}
 			//odpair.updateTrRouteUtility(r.getTrRouteId(), u,timeBeanId);
+			String[] part = r.getTrRouteId().toString().split("_");
+			String odId = part[0]+"_"+part[1]+"_"+part[2]+"_"+part[3];
+			if(!odpair.getODpairId().toString().equals(odId)) {
+				logger.debug("Route do not belong to odpair");
+			}
+			if(utility.containsKey(r.getTrRouteId())) {
+				logger.debug("duplicate route key!!!!");
+//				String[] part = r.getTrRouteId().toString().split("_");
+//				String odId = part[0]+"_"+part[1]+"_"+part[2]+"_"+part[3];
+//				if(!odpair.getODpairId().toString().equals(odId))
+			}
 			utility.put(r.getTrRouteId(), u);
 
 		}
@@ -801,11 +816,17 @@ protected Map<Id<TransitLink>,Double> performTransitNetworkLoading(String timeBe
 		List<Map<Id<TransitLink>, Double>> linkTransitVolumes=Collections.synchronizedList(new ArrayList<>());
 		
 		this.odPairs.getODpairset().values().parallelStream().forEach(odpair->{
+//			if(odpair.getODpairId().toString().equals("227014.0_624041.0_person_TCSwithoutCar")) {
+//				logger.debug("debug here.");
+//			}
 			double totalDemand=this.Demand.get(timeBeanId).get(odpair.getODpairId());
 			double carDemand=this.carDemand.get(timeBeanId).get(odpair.getODpairId());
 			if((totalDemand-carDemand)!=0) {
 				linkTransitVolumes.add(this.NetworkLoadingTransitSingleOD(odpair.getODpairId(),timeBeanId,counter,params,anaParams));
 			}
+//			if((totalDemand-carDemand)==0 && odpair.getTrRoutes(timeBeanId)!=null) {
+//				logger.debug("dimension mismatch");
+//			}
 		});	
 		
 		for(Map<Id<TransitLink>, Double> lv:linkTransitVolumes) {
@@ -877,9 +898,9 @@ protected boolean CheckConvergence(Map<Id<Link>,Double> linkVolume,Map<Id<Transi
 	this.linkVolumeUpdate.put(timeBeanId, new HashMap<>());
 	this.linkTrVolumeUpdate.put(timeBeanId, new HashMap<>());
 	for(Id<Link> linkid:linkVolume.keySet()){
-		if(linkVolume.get(linkid)==0) {
-			error=0;
-		}else {
+//		if(linkVolume.get(linkid)==0) {
+//			error=0;
+//		}else {
 			double currentVolume=((AnalyticalModelLink) this.networks.get(timeBeanId).getLinks().get(linkid)).getLinkCarVolume();
 			double newVolume=linkVolume.get(linkid);
 			this.linkVolumeUpdate.get(timeBeanId).put(linkid, newVolume - currentVolume);
@@ -887,13 +908,13 @@ protected boolean CheckConvergence(Map<Id<Link>,Double> linkVolume,Map<Id<Transi
 			if(error==Double.POSITIVE_INFINITY||error==Double.NEGATIVE_INFINITY) {
 				throw new IllegalArgumentException("Error is infinity!!!");
 			}
-			if(newVolume != 0 && error/newVolume*100>tollerance) {					
+			if(newVolume != 0 && error/(newVolume+.00000001)*100>tollerance) {					
 				sum+=1;
 			}
 			if(error>1) {
 				linkAbove1++;
 			}
-		}
+		//}
 		
 		squareSum+=error;
 		if(squareSum==Double.POSITIVE_INFINITY||squareSum==Double.NEGATIVE_INFINITY) {
@@ -901,21 +922,21 @@ protected boolean CheckConvergence(Map<Id<Link>,Double> linkVolume,Map<Id<Transi
 		}
 	}
 	for(Id<TransitLink> transitlinkid:transitlinkVolume.keySet()){
-		if(transitlinkVolume.get(transitlinkid)==0) {
-			error=0;
-		}else {
+//		if(transitlinkVolume.get(transitlinkid)==0) {
+//			error=0;
+//		}else {
 			double currentVolume=this.transitLinks.get(timeBeanId).get(transitlinkid).getPassangerCount();
 			double newVolume=transitlinkVolume.get(transitlinkid);
 			this.linkTrVolumeUpdate.get(timeBeanId).put(transitlinkid, newVolume-currentVolume);
 			error=Math.pow((currentVolume-newVolume),2);
-			if(newVolume!=0 && error/newVolume*100>tollerance) {
+			if(newVolume!=0 && error/(newVolume+.0000001)*100>tollerance) {
 
 				sum+=1;
 			}
 			if(error>1) {
 				linkAbove1++;
 			}
-		}
+		//}
 		if(error==Double.NaN||error==Double.NEGATIVE_INFINITY) {
 			throw new IllegalArgumentException("Stop!!! There is something wrong!!!");
 		}
@@ -987,9 +1008,10 @@ protected void performModalSplit(LinkedHashMap<String,Double>params,LinkedHashMa
 		double demand=this.Demand.get(timeBeanId).get(odPair.getODpairId());
 		if(demand!=0) { 
 			
-		double carUtility=this.expectedMaximumCarUtility.get(timeBeanId).get(odPair.getODpairId());
-		double transitUtility=this.expectedMaximumTrUtility.get(timeBeanId).get(odPair.getODpairId());
-		
+		Double carUtility=this.expectedMaximumCarUtility.get(timeBeanId).get(odPair.getODpairId());
+		Double transitUtility=this.expectedMaximumTrUtility.get(timeBeanId).get(odPair.getODpairId());
+		if(carUtility==null)carUtility = Double.NEGATIVE_INFINITY;
+		if(transitUtility==null)transitUtility = Double.NEGATIVE_INFINITY;
 		if(carUtility==Double.NEGATIVE_INFINITY||transitUtility==Double.POSITIVE_INFINITY||
 				Math.exp(transitUtility*modeMiu)==Double.POSITIVE_INFINITY) {
 			this.carDemand.get(timeBeanId).put(odPair.getODpairId(), 0.0);
@@ -1037,11 +1059,11 @@ public void initializeGradients(LinkedHashMap<String,Double> Oparams) {
 	for(String timeId:this.timeBeans.keySet()) {
 		this.linkGradient.put(timeId, new HashMap<>());
 		//this.linkGradient.get(timeId).putAll(this.networks.get(timeId).getLinks().keySet().parallelStream().collect(Collectors.toMap(kk->kk, kk->new HashMap<>(zeroGrad))));
-		this.linkGradient.get(timeId).putAll(this.networks.get(timeId).getLinks().keySet().parallelStream().collect(Collectors.toMap(kk->kk, kk->new double[this.gradientKeys.size()])));
+		this.linkGradient.get(timeId).putAll(this.linkIncidenceMatrix.keySet().parallelStream().collect(Collectors.toMap(kk->kk, kk->new double[this.gradientKeys.size()])));
 		
 		this.linkTTGradient.put(timeId, new HashMap<>());
 		//this.linkTTGradient.get(timeId).putAll(this.networks.get(timeId).getLinks().keySet().parallelStream().collect(Collectors.toMap(kk->kk, kk->new HashMap<>(zeroGrad))));
-		this.linkTTGradient.get(timeId).putAll(this.networks.get(timeId).getLinks().keySet().parallelStream().collect(Collectors.toMap(kk->kk, kk->new double[this.gradientKeys.size()])));
+		this.linkTTGradient.get(timeId).putAll(this.linkIncidenceMatrix.keySet().parallelStream().collect(Collectors.toMap(kk->kk, kk->new double[this.gradientKeys.size()])));
 		
 		this.trLinkGradient.put(timeId, new HashMap<>());
 		//this.trLinkGradient.get(timeId).putAll(this.transitLinks.get(timeId).keySet().parallelStream().collect(Collectors.toMap(kk->kk, kk->new HashMap<>(zeroGrad))));
@@ -1174,7 +1196,7 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 			
 //			double carUGrad = 0;
 			RealVector carUGradient = MatrixUtils.createRealVector(new double[this.gradientKeys.size()]);
-			
+			if( od.getValue().getRoutes()!=null) {
 			for(AnalyticalModelRoute route: od.getValue().getRoutes()) {
 //				double uGradient = 0;
 				RealVector uGrad = MatrixUtils.createRealVector(new double[this.gradientKeys.size()]);
@@ -1190,10 +1212,12 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 //				carUGrad+=this.routeProb.get(timeId).get(route.getRouteId())*uGradient;
 				carUGradient = carUGradient.add(uGrad.mapMultiply(this.routeProb.get(timeId).get(route.getRouteId())));
 			}
+			}
 //			Map<Id<AnalyticalModelTransitRoute>,Double> trRouteUGradient = new HashMap<>();	
 			Map<Id<AnalyticalModelTransitRoute>,double[]> trRouteUGrad = new HashMap<>();
 //			double trUGradient = 0;
 			RealVector trUtGrad = MatrixUtils.createRealVector(new double[this.gradientKeys.size()]);
+			if(od.getValue().getTrRoutes(timeId)!=null) {
 			for(AnalyticalModelTransitRoute trRoute : od.getValue().getTrRoutes(timeId)) {
 				
 //				double routeGradientDlink = 0;
@@ -1223,7 +1247,7 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 //				trUGradient += this.trRouteProb.get(timeId).get(trRoute.getTrRouteId())*grad;
 				trUtGrad.add(g.mapMultiply(this.trRouteProb.get(timeId).get(trRoute.getTrRouteId())));
 			}
-			
+			}
 			if(od.getValue().getSubPopulation()!=null && (od.getValue().getSubPopulation().contains("GV")||od.getValue().getSubPopulation().contains("trip"))) {
 				//carUGrad = 0;
 				carUGradient.mapMultiplyToSelf(0);
@@ -1232,7 +1256,8 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 			}
 			
 			//Calculate route flow gradient 
-			double pm = this.carProbability.get(timeId).get(od.getKey()); 
+			double pm = 0;
+			if(this.carProbability.get(timeId).get(od.getKey())!=null) pm = this.carProbability.get(timeId).get(od.getKey()); 
 //			double modeConst = pm*carUGrad+(1-pm)*trUGradient;
 			RealVector modeC = carUGradient.mapMultiplyToSelf(pm).add(trUtGrad.mapMultiplyToSelf(1-pm));
 			double d = this.Demand.get(timeId).get(od.getKey());
@@ -1250,6 +1275,12 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 					double term2 = pr*ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var1)*d/params.get(var1);
 					tt2.put(var1, term2);
 				}
+//				if(tt2.size()!=this.gradientKeys.size()) {
+//					System.out.println();
+//				}
+//				if(this.gradientArray.getKeySet().size()!=this.gradientKeys.size()) {
+//					System.out.println();
+//				}
 //				double grad = term0 + term1 + term2;
 				RealVector g = t0.add(t1).add(this.gradientArray.getRealVector(tt2).mapMultiplyToSelf(pm));
 //				this.routeFlowGradient.get(timeId).get(rId.getKey()).put(var, grad);
@@ -1291,8 +1322,18 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 			this.linkGradient.get(timeId).put(linkId.getKey(),gUpdate.toArray());
 //		}
 	});
+	double totR = 0;
+	Set<Id<AnalyticalModelTransitRoute>> rIds = new HashSet<>();
+	for(AnalyticalModelODpair od:this.odPairs.getODpairset().values()) {
+		if(od.getTrRoutes(timeId)!=null) {
+			totR+=od.getTrRoutes(timeId).size();
+			od.getTrRoutes(timeId).stream().forEach(r->rIds.add(r.getTrRouteId()));
+		}
+	}
+	System.out.println("transit routes = "+totR);
+	System.out.println("unique transit routes = "+ rIds.size());
 	
-	this.trLinkGradient.get(timeId).entrySet().parallelStream().forEach(linkId->{
+	this.trLinkGradient.get(timeId).entrySet().parallelStream().forEach(linkId->{	
 //		for(String var:this.gradientKeys) {
 //			double oldGrad = this.trLinkGradient.get(timeId).get(linkId.getKey()).get(var);
 			RealVector old = MatrixUtils.createRealVector(this.trLinkGradient.get(timeId).get(linkId.getKey()));
@@ -1300,7 +1341,9 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 			RealVector g = MatrixUtils.createRealVector(new double[this.gradientKeys.size()]);
 			for(Id<AnalyticalModelTransitRoute>r:this.trLinkIncidenceMatrix.get(timeId).get(linkId.getKey())) {
 //				grad+=this.trRouteFlowGradient.get(timeId).get(r).get(var);
-				g = g.add(MatrixUtils.createRealVector(this.trRouteFlowGradient.get(timeId).get(r)));
+				if(this.trRouteFlowGradient.get(timeId).get(r)!=null) {
+					g = g.add(MatrixUtils.createRealVector(this.trRouteFlowGradient.get(timeId).get(r)));
+				}
 			}
 //			double gradUpdate = oldGrad + (grad-oldGrad)*(1/this.beta.get(timeId).get(counter-1));
 			RealVector gradU = old.add(g.subtract(old).mapMultiplyToSelf((1/this.beta.get(timeId).get(counter-1))));
@@ -1315,7 +1358,9 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 			RealVector g = MatrixUtils.createRealVector(new double[this.gradientKeys.size()]);
 			for(Id<AnalyticalModelTransitRoute>r:this.fareLinkincidenceMatrix.get(timeId).get(linkId.getKey())) {
 //				grad+=this.trRouteFlowGradient.get(timeId).get(r).get(var);
-				g = g.add(MatrixUtils.createRealVector(this.trRouteFlowGradient.get(timeId).get(r)));
+				if(this.trRouteFlowGradient.get(timeId).get(r)!=null) {
+					g = g.add(MatrixUtils.createRealVector(this.trRouteFlowGradient.get(timeId).get(r)));
+				}
 			}
 //			this.fareLinkGradient.get(timeId).get(linkId.getKey()).put(var, grad);
 			this.fareLinkGradient.get(timeId).put(linkId.getKey(), g.toArray());

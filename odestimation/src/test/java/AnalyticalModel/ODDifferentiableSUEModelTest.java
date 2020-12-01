@@ -2,6 +2,8 @@ package AnalyticalModel;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -43,6 +45,7 @@ import org.xml.sax.SAXException;
 
 import com.google.common.collect.Maps;
 
+import core.MapToArray;
 import core.ODUtils;
 import createPTGTFS.FareCalculatorPTGTFS;
 import dynamicTransitRouter.fareCalculators.FareCalculator;
@@ -126,21 +129,29 @@ class ODDifferentiableSUEModelTest {
 			
 			for(String timeId:originalMeasurements.getTimeBean().keySet()) {
 				model.getOdPairs().getODpairset().entrySet().forEach(k->{
-					uniqueVars.add(ODUtils.createODMultiplierVariableName(k.getKey(),k.getValue().getSubPopulation(), ODUtils.OriginDestinationMultiplierVariableName, timeId));
+					uniqueVars.add(ODUtils.createODMultiplierVariableName(k.getKey(),k.getValue().getSubPopulation(), ODUtils.OriginMultiplierVariableName, timeId));
+					uniqueVars.add(ODUtils.createODMultiplierVariableName(k.getKey(),k.getValue().getSubPopulation(), ODUtils.DestinationMultiplierVariableName, timeId));
 				});
 			}
 			Map<String,VariableDetails> Param = new HashMap<>();
-			for(String k:uniqueVars)Param.put(k, new VariableDetails(k, new Tuple<Double,Double>(0.1,8.), 2.0));
+			for(String k:uniqueVars)Param.put(k, new VariableDetails(k, new Tuple<Double,Double>(0.1,8.), Math.sqrt(2.0)));
 			Optimizer adam = new Adam("odOptim",Param,0.01,0.9,.999,10e-8);
 			for(int counter = 0;counter<100;counter++) {
-				System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
+				//System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
+				long t = System.currentTimeMillis();
 				LinkedHashMap<String,Double> params = new LinkedHashMap<>();
 				Param.values().stream().forEach(v->params.put(v.getVariableName(), v.getCurrentValue()));
-				Measurements modelMeasurements = model.perFormSUE(params, originalMeasurements);
-				Map<String,Double> grad = ODUtils.calcODObjectiveGradient(originalMeasurements, modelMeasurements, model);
+				Measurements modelMeasurements = model.perFormSUE(params, timeSplitMeasurements.get(timeBean.getKey()));
+				Map<String,Double> grad = ODUtils.calcODObjectiveGradient(timeSplitMeasurements.get(timeBean.getKey()), modelMeasurements, model);
 				Param = adam.takeStep(grad);
-				ObjectiveCalculator.calcObjective(originalMeasurements, modelMeasurements, ObjectiveCalculator.TypeMeasurementAndTimeSpecific);
+				double objective = ObjectiveCalculator.calcObjective(originalMeasurements, modelMeasurements, ObjectiveCalculator.TypeMeasurementAndTimeSpecific);
 				System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
+				System.out.println("Finished iteration "+counter);
+				System.out.println("Objective = "+objective);
+				final Map<String,VariableDetails> p = new LinkedHashMap<String,VariableDetails>(Param);
+				Map<String,Double> paramValues = Param.keySet().stream().collect(Collectors.toMap(k->k, k->p.get(k).getCurrentValue()));
+				dumpData("seperateODMultiplier",counter,timeBean.getKey(),objective,paramValues,grad);
+				System.out.println("Time Required for iteratio "+counter+" = "+(System.currentTimeMillis()-t)/1000+" seconds.");
 			}
 		}
 	}
@@ -165,5 +176,28 @@ class ODDifferentiableSUEModelTest {
 		}
 		
 		return mOuts;
+	}
+	
+	public static void dumpData(String folderLoc, int counter, String timeBean, double objective, Map<String,Double> param,Map<String,Double> grad) {
+		File file = new File(folderLoc);
+		if(!file.exists())file.mkdir();
+		String paramAndGradFileName = folderLoc+"/gradAndParam_"+timeBean+"_"+counter+".csv";
+		MapToArray<String> m2a = new MapToArray<String>("writerM2A",param.keySet());
+		Map<String,double[]> mapToWrite = new HashMap<>();
+		mapToWrite.put("Variables",m2a.getMatrix(param));
+		mapToWrite.put("Gradient",m2a.getMatrix(grad));
+		
+		m2a.writeCSV(mapToWrite, paramAndGradFileName);
+		String iterLogerFileName = folderLoc+"/iterLogger"+timeBean+".csv";
+		try {
+			FileWriter fw = new FileWriter(new File(iterLogerFileName),true);
+			if(counter == 1)fw.append("Iterantion,timeId,Objective\n");
+			fw.append(counter+","+timeBean+","+objective+"\n");
+			fw.flush();
+			fw.close();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
 	}
 }
