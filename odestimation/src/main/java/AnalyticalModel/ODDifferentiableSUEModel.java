@@ -655,9 +655,9 @@ protected HashMap<Id<TransitLink>,Double> NetworkLoadingTransitSingleOD(Id<Analy
 	
 	AnalyticalModelODpair odpair=this.odPairs.getODpairset().get(ODpairId);
 	List<AnalyticalModelTransitRoute> routes=odpair.getTrRoutes(timeBeanId);
-	if(odpair.getODpairId().toString().equals("227014.0_624041.0_person_TCSwithoutCar")) {
-		logger.debug("debug here.");
-	}
+//	if(odpair.getODpairId().toString().equals("227014.0_624041.0_person_TCSwithoutCar")) {
+//		logger.debug("debug here.");
+//	}
 	HashMap<Id<AnalyticalModelTransitRoute>,Double> routeFlows=new HashMap<>();
 	HashMap<Id<TransitLink>,Double> linkFlows=new HashMap<>();
 	String subPopulation = odpair.getSubPopulation();
@@ -950,7 +950,7 @@ protected boolean CheckConvergence(Map<Id<Link>,Double> linkVolume,Map<Id<Transi
 		this.error.get(timeBeanId).clear();
 	}
 	this.error.get(timeBeanId).add(squareSum);
-	logger.info("ERROR amount for "+timeBeanId+" = "+squareSum);
+	logger.info("ERROR amount for "+timeBeanId+" at sue iteration "+counter+" = "+squareSum);
 	//System.out.println("in timeBean Id "+timeBeanId+" No of link not converged = "+sum);
 	
 //	try {
@@ -1105,7 +1105,7 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 	
 	if(this.intiializeGradient) {//maybe its better to do it once in the generate od pair and then not do it again 
 		this.initializeGradients(oparams);
-		System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
+		//System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
 		
 	}else {
 		//Calculate the travel time gradients
@@ -1322,16 +1322,16 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 			this.linkGradient.get(timeId).put(linkId.getKey(),gUpdate.toArray());
 //		}
 	});
-	double totR = 0;
-	Set<Id<AnalyticalModelTransitRoute>> rIds = new HashSet<>();
-	for(AnalyticalModelODpair od:this.odPairs.getODpairset().values()) {
-		if(od.getTrRoutes(timeId)!=null) {
-			totR+=od.getTrRoutes(timeId).size();
-			od.getTrRoutes(timeId).stream().forEach(r->rIds.add(r.getTrRouteId()));
-		}
-	}
-	System.out.println("transit routes = "+totR);
-	System.out.println("unique transit routes = "+ rIds.size());
+//	double totR = 0;
+//	Set<Id<AnalyticalModelTransitRoute>> rIds = new HashSet<>();
+//	for(AnalyticalModelODpair od:this.odPairs.getODpairset().values()) {
+//		if(od.getTrRoutes(timeId)!=null) {
+//			totR+=od.getTrRoutes(timeId).size();
+//			od.getTrRoutes(timeId).stream().forEach(r->rIds.add(r.getTrRouteId()));
+//		}
+//	}
+//	System.out.println("transit routes = "+totR);
+//	System.out.println("unique transit routes = "+ rIds.size());
 	
 	this.trLinkGradient.get(timeId).entrySet().parallelStream().forEach(linkId->{	
 //		for(String var:this.gradientKeys) {

@@ -145,12 +145,12 @@ class ODDifferentiableSUEModelTest {
 				Map<String,Double> grad = ODUtils.calcODObjectiveGradient(timeSplitMeasurements.get(timeBean.getKey()), modelMeasurements, model);
 				Param = adam.takeStep(grad);
 				double objective = ObjectiveCalculator.calcObjective(originalMeasurements, modelMeasurements, ObjectiveCalculator.TypeMeasurementAndTimeSpecific);
-				System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
 				System.out.println("Finished iteration "+counter);
 				System.out.println("Objective = "+objective);
 				final Map<String,VariableDetails> p = new LinkedHashMap<String,VariableDetails>(Param);
 				Map<String,Double> paramValues = Param.keySet().stream().collect(Collectors.toMap(k->k, k->p.get(k).getCurrentValue()));
 				dumpData("seperateODMultiplier",counter,timeBean.getKey(),objective,paramValues,grad);
+				System.out.println("Used Memory in GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
 				System.out.println("Time Required for iteratio "+counter+" = "+(System.currentTimeMillis()-t)/1000+" seconds.");
 			}
 		}
