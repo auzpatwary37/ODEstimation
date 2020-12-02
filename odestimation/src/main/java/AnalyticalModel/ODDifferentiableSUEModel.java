@@ -503,7 +503,7 @@ public SUEModelOutput singleTimeBeanTA(LinkedHashMap<String, Double> params,Link
 		linkCarVolume=this.performCarNetworkLoading(timeBeanId,i,params,anaParams);
 		linkTransitVolume=this.performTransitNetworkLoading(timeBeanId,i,params,anaParams);
 		System.out.println("Finished network loading.");
-		System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
+		//System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
 		shouldStop=this.CheckConvergence(linkCarVolume, linkTransitVolume, this.tollerance, timeBeanId,i);
 		///the beta should already be calculated by this line. 
 		this.caclulateGradient(timeBeanId, i, params, anaParams);
@@ -546,7 +546,7 @@ public SUEModelOutput singleTimeBeanTA(LinkedHashMap<String, Double> params,Link
 //				}
 //				
 //			}
-			this.fareLinkincidenceMatrix.get(timeBeanId).entrySet().parallelStream().forEach(fl->{
+			this.fareLinkincidenceMatrix.get(timeBeanId).entrySet().stream().forEach(fl->{
 				double flow = 0;
 				for(Id<AnalyticalModelTransitRoute> trRoute:fl.getValue()){
 					flow+=this.trRouteFlow.get(timeBeanId).get(trRoute);
@@ -1171,7 +1171,7 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 							g2 = g2.add(MatrixUtils.createRealVector(this.trLinkGradient.get(timeId).get(l)));
 						}
 						//grad = grad1*grad2;
-						g = g2.mapMultiplyToSelf(grad1).toArray();
+						g = g2.mapMultiply(grad1).toArray();
 					}else {
 						grad = 0;
 					}
@@ -1259,7 +1259,7 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 			double pm = 0;
 			if(this.carProbability.get(timeId).get(od.getKey())!=null) pm = this.carProbability.get(timeId).get(od.getKey()); 
 //			double modeConst = pm*carUGrad+(1-pm)*trUGradient;
-			RealVector modeC = carUGradient.mapMultiplyToSelf(pm).add(trUtGrad.mapMultiplyToSelf(1-pm));
+			RealVector modeC = carUGradient.mapMultiply(pm).add(trUtGrad.mapMultiply(1-pm));
 			double d = this.Demand.get(timeId).get(od.getKey());
 			Map<String,Double> tt2 = new HashMap<>();
 //			for(Entry<Id<AnalyticalModelRoute>, Double> rId:routeUGradient.entrySet()) {

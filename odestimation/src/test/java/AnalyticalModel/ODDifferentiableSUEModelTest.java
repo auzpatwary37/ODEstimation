@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
@@ -21,6 +22,7 @@ import javax.xml.parsers.SAXParserFactory;
 import org.junit.jupiter.api.Test;
 import org.matsim.api.core.v01.Id;
 import org.matsim.api.core.v01.Scenario;
+import org.matsim.api.core.v01.network.Link;
 import org.matsim.api.core.v01.network.Network;
 import org.matsim.api.core.v01.population.Activity;
 import org.matsim.api.core.v01.population.Person;
@@ -58,6 +60,7 @@ import optimizer.Optimizer;
 import optimizer.VariableDetails;
 import ust.hk.praisehk.metamodelcalibration.calibrator.ObjectiveCalculator;
 import ust.hk.praisehk.metamodelcalibration.measurements.Measurement;
+import ust.hk.praisehk.metamodelcalibration.measurements.MeasurementType;
 import ust.hk.praisehk.metamodelcalibration.measurements.Measurements;
 import ust.hk.praisehk.metamodelcalibration.measurements.MeasurementsReader;
 
@@ -66,6 +69,16 @@ class ODDifferentiableSUEModelTest {
 	//public static void main(String[] args) {
 	public static void main(String[] args) {
 		Measurements originalMeasurements = new MeasurementsReader().readMeasurements("fullHk/ATCMeasurementsPeakFuLLHK.xml");
+		Network net = NetworkUtils.readNetwork("fullHk/output_network.xml.gz");
+		for(Measurement m:new ArrayList<>(originalMeasurements.getMeasurementsByType().get(MeasurementType.linkVolume))) {
+			List<Id<Link>> linkList = (List<Id<Link>>)m.getAttribute(Measurement.linkListAttributeName);
+			for(Id<Link>lId:linkList) {
+				if(!net.getLinks().containsKey(lId)) {
+					originalMeasurements.removeMeasurement(m.getId());
+					break;
+				}
+			}
+		}
 		Map<String,Measurements> timeSplitMeasurements=timeSplitMeasurements(originalMeasurements);
 		Config config = ConfigUtils.createConfig();
 		ConfigUtils.loadConfig("fullHk/output_config.xml");
@@ -77,6 +90,7 @@ class ODDifferentiableSUEModelTest {
 		config.network().setInputFile("fullHk/output_network.xml.gz");
 		Scenario scenario = ScenarioUtils.loadScenario(config);
 		//Vehicles vehicles = VehicleUtils.createVehiclesContainer();
+		
 		
 		ObjectAttributes obj = new ObjectAttributes();
 		new ObjectAttributesXmlReader(obj).readFile("fullHK/output_PersonAttributes.xml.gz");
@@ -149,9 +163,13 @@ class ODDifferentiableSUEModelTest {
 				System.out.println("Objective = "+objective);
 				final Map<String,VariableDetails> p = new LinkedHashMap<String,VariableDetails>(Param);
 				Map<String,Double> paramValues = Param.keySet().stream().collect(Collectors.toMap(k->k, k->p.get(k).getCurrentValue()));
-				dumpData("seperateODMultiplier",counter,timeBean.getKey(),objective,paramValues,grad);
+				MapToArray<String> m2a = new MapToArray<String>("writerM2A",grad.keySet());
+				double gradNorm = m2a.getRealVector(grad).getNorm();
+				dumpData("seperateODMultiplier",counter,timeBean.getKey(),objective,paramValues,grad,gradNorm);
 				System.out.println("Used Memory in GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
 				System.out.println("Time Required for iteratio "+counter+" = "+(System.currentTimeMillis()-t)/1000+" seconds.");
+				if(gradNorm<10)break;
+				
 			}
 		}
 	}
@@ -178,7 +196,7 @@ class ODDifferentiableSUEModelTest {
 		return mOuts;
 	}
 	
-	public static void dumpData(String folderLoc, int counter, String timeBean, double objective, Map<String,Double> param,Map<String,Double> grad) {
+	public static void dumpData(String folderLoc, int counter, String timeBean, double objective, Map<String,Double> param,Map<String,Double> grad,double gradNorm) {
 		File file = new File(folderLoc);
 		if(!file.exists())file.mkdir();
 		String paramAndGradFileName = folderLoc+"/gradAndParam_"+timeBean+"_"+counter+".csv";
@@ -191,8 +209,8 @@ class ODDifferentiableSUEModelTest {
 		String iterLogerFileName = folderLoc+"/iterLogger"+timeBean+".csv";
 		try {
 			FileWriter fw = new FileWriter(new File(iterLogerFileName),true);
-			if(counter == 1)fw.append("Iterantion,timeId,Objective\n");
-			fw.append(counter+","+timeBean+","+objective+"\n");
+			if(counter == 1)fw.append("Iterantion,timeId,Objective,GradNorm\n");
+			fw.append(counter+","+timeBean+","+objective+","+gradNorm+"\n");
 			fw.flush();
 			fw.close();
 		} catch (IOException e) {
@@ -200,4 +218,5 @@ class ODDifferentiableSUEModelTest {
 			e.printStackTrace();
 		}
 	}
+	
 }

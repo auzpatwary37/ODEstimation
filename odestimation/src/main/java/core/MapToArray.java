@@ -97,4 +97,9 @@ public void writeCSV(Map<String,double[]> mapToWrite,String fileLoc) {
 	}
 }
 
+
+public static void main(String[] args) {
+	String a = "ami\"";
+	System.out.println(a.replace("\"", ""));
+}
 }

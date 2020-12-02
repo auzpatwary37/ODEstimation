@@ -266,7 +266,9 @@ public class ODUtils {
 //						for(Entry<String, Double> gd:model.getLinkGradient().get(timeId.getKey()).get(l).entrySet()){
 //							grad.compute(gd.getKey(), (k,v)->v==null?gd.getValue()*delta:v+gd.getValue()*delta);
 //						}
-						g = g.add(MatrixUtils.createRealVector(model.getLinkGradient().get(timeId.getKey()).get(l)).mapMultiplyToSelf(delta));
+						if(model.getLinkGradient().get(timeId.getKey()).get(l)!=null) {
+							g = g.add(MatrixUtils.createRealVector(model.getLinkGradient().get(timeId.getKey()).get(l)).mapMultiplyToSelf(delta));
+						}
 					}
 					//grad = model.getLinkGradient().get(timeId.getKey()).get()
 				}else if(type.equals(MeasurementType.fareLinkVolume)) {
