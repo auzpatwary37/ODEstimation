@@ -149,7 +149,7 @@ class ODDifferentiableSUEModelTest {
 			}
 			Map<String,VariableDetails> Param = new HashMap<>();
 			for(String k:uniqueVars)Param.put(k, new VariableDetails(k, new Tuple<Double,Double>(0.1,8.), Math.sqrt(2.0)));
-			Optimizer adam = new Adam("odOptim",Param,0.1,0.9,.999,10e-8);
+			Optimizer adam = new Adam("odOptim",Param,0.15,0.9,.999,10e-8);
 			for(int counter = 0;counter<100;counter++) {
 				//System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
 				long t = System.currentTimeMillis();
@@ -161,7 +161,7 @@ class ODDifferentiableSUEModelTest {
 				Param.values().stream().forEach(v->params.put(v.getVariableName(), v.getCurrentValue()));
 				Measurements modelMeasurements = model.perFormSUE(params, timeSplitMeasurements.get(timeBean.getKey()));
 				Map<String,Double> grad = ODUtils.calcODObjectiveGradient(timeSplitMeasurements.get(timeBean.getKey()), modelMeasurements, model);
-
+				writeMeasurementsComparison(timeSplitMeasurements.get(timeBean.getKey()),modelMeasurements,counter,"seperateODMultiplier",timeBean.getKey());
 				Param = adam.takeStep(grad);
 				double objective = ObjectiveCalculator.calcObjective(timeSplitMeasurements.get(timeBean.getKey()), modelMeasurements, ObjectiveCalculator.TypeMeasurementAndTimeSpecific);
 				System.out.println("Finished iteration "+counter);
@@ -223,5 +223,28 @@ class ODDifferentiableSUEModelTest {
 			e.printStackTrace();
 		}
 	}
-	
+	 
+	public static void writeMeasurementsComparison(Measurements realMeasurements, Measurements modelMeasurements, int counter, String fileLoc, String timeId) {
+		fileLoc = fileLoc+"/measurementsComparison"+timeId+"_"+counter+".csv";
+		try {
+			FileWriter fw = new FileWriter(new File(fileLoc));
+			fw.append("MeasurementId,tiemBeanId,realCount,modelCount,apa,geh\n");
+			fw.flush();
+			for(Entry<Id<Measurement>, Measurement> m:realMeasurements.getMeasurements().entrySet()) {
+				for(Entry<String, Double> v:m.getValue().getVolumes().entrySet()) {
+					Measurement mModel = modelMeasurements.getMeasurements().get(m.getKey());
+					if(mModel!=null && mModel.getVolumes().containsKey(v.getKey())) {
+						double apa = Math.abs(v.getValue()-mModel.getVolumes().get(v.getKey()))/v.getValue()*100;
+						double geh = Math.sqrt(2*Math.pow(v.getValue()-mModel.getVolumes().get(v.getKey()),2)/(v.getValue()+mModel.getVolumes().get(v.getKey())));
+						fw.append(m.getKey().toString()+","+v.getKey()+","+v.getValue()+","+mModel.getVolumes().get(v.getKey())+","+apa+","+geh+"\n");
+						fw.flush();
+					}
+				}
+			}
+			fw.close();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
 }
