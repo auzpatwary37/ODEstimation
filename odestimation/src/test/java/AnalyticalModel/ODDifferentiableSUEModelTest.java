@@ -149,7 +149,7 @@ class ODDifferentiableSUEModelTest {
 			}
 			Map<String,VariableDetails> Param = new HashMap<>();
 			for(String k:uniqueVars)Param.put(k, new VariableDetails(k, new Tuple<Double,Double>(0.1,8.), Math.sqrt(2.0)));
-			Optimizer adam = new Adam("odOptim",Param,0.05,0.9,.999,10e-8);
+			Optimizer adam = new Adam("odOptim",Param,0.1,0.9,.999,10e-8);
 			for(int counter = 0;counter<100;counter++) {
 				//System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
 				long t = System.currentTimeMillis();

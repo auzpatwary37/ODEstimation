@@ -156,7 +156,8 @@ private MapToArray<String> gradientArray;
 private Map<String,Map<Id<Link>,Double>> linkVolumeUpdate = new HashMap<>();
 private Map<String,Map<Id<TransitLink>,Double>> linkTrVolumeUpdate = new HashMap<>();
 
-
+private Map<String,Map<Id<AnalyticalModelODpair>,double[]>>odParameterIncidence = new HashMap<>();
+private boolean ifODParameterIncidence = true;
 //This are needed for output generation 
 
 
@@ -1101,6 +1102,8 @@ public void initializeGradients(LinkedHashMap<String,Double> Oparams) {
 		//this.fareLinkGradient.get(timeId).putAll(this.fareLinkincidenceMatrix.get(timeId).keySet().parallelStream().collect(Collectors.toMap(kk->kk, kk->new HashMap<>(zeroGrad))));
 		this.fareLinkGradient.get(timeId).putAll(this.fareLinkincidenceMatrix.get(timeId).keySet().parallelStream().collect(Collectors.toMap(kk->kk, kk->new double[this.gradientKeys.size()])));
 		
+		this.odParameterIncidence.put(timeId, new HashMap<>());
+		this.odParameterIncidence.get(timeId).putAll(this.odPairs.getODpairset().keySet().parallelStream().collect(Collectors.toMap(kk->kk, kk->new double[this.gradientKeys.size()])));
 	}
 	this.intiializeGradient = false;
 	logger.info("Finished initializing gradients");
@@ -1116,7 +1119,7 @@ public void initializeGradients(LinkedHashMap<String,Double> Oparams) {
  * @param anaParam
  */
 public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,Double> oparams, LinkedHashMap<String,Double>anaParam) {
-
+	//RealVector p = null;
 	
 	if(this.intiializeGradient) {//maybe its better to do it once in the generate od pair and then not do it again 
 		this.initializeGradients(oparams);
@@ -1283,7 +1286,7 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 //			double modeConst = pm*carUGrad+(1-pm)*trUGradient;
 			RealVector modeC = carUGradient.mapMultiply(pm).add(trUtGrad.mapMultiply(1-pm));
 			double d = this.Demand.get(timeId).get(od.getKey());
-			Map<String,Double> odInc = new HashMap<>();
+			//Map<String,Double> odInc = new HashMap<>();
 //			for(Entry<Id<AnalyticalModelRoute>, Double> rId:routeUGradient.entrySet()) {
 			for(Entry<Id<AnalyticalModelRoute>, double[]> rId:routeUGrad.entrySet()) {
 				double pr = this.routeProb.get(timeId).get(rId.getKey());
@@ -1291,12 +1294,24 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 				RealVector t0 = MatrixUtils.createRealVector(rId.getValue()).subtract(carUGradient).mapMultiply(pm*d*pr*anaParam.get(CNLSUEModel.LinkMiuName));
 		//		double term1 = pr*d*pm*anaParam.get(CNLSUEModel.ModeMiuName)*(carUGrad-modeConst);
 				RealVector t1 = carUGradient.subtract(modeC).mapMultiply(pr*d*pm*anaParam.get(CNLSUEModel.ModeMiuName));
-				Map<String,Double> tt2 = new HashMap<>();
-				for(String var1:this.gradientKeys) {
-					//double term2 = pr*pm*ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var1)*d/params.get(var1);
-					double term2 = pr*pm*ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var1)*d/params.get(var1);
-					tt2.put(var1, term2);
+		//		Map<String,Double> tt2 = new HashMap<>();
+				
+				if(this.ifODParameterIncidence) {
+					Map<String,Double> oi = new HashMap<>();
+					for(String var1:this.gradientKeys) {
+						double term2 = ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var1);
+						oi.put(var1, term2);
+					}
+					this.odParameterIncidence.get(timeId).put(od.getKey(), this.gradientArray.getMatrix(oi));
 				}
+				RealVector odInc = MatrixUtils.createRealVector(this.odParameterIncidence.get(timeId).get(od.getKey()));
+				RealVector p = this.gradientArray.getRealVector(oparams);
+				RealVector tt2 = odInc.ebeDivide(p).mapMultiply(pr*pm*d);
+//				for(String var1:this.gradientKeys) {
+//					//double term2 = pr*pm*ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var1)*d/params.get(var1);
+//					double term2 = pr*pm*ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var1)*d/params.get(var1);
+//					tt2.put(var1, term2);
+//				}
 //				if(tt2.size()!=this.gradientKeys.size()) {
 //					System.out.println();
 //				}
@@ -1304,7 +1319,8 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 //					System.out.println();
 //				}
 //				double grad = term0 + term1 + term2;
-				RealVector g = t0.add(t1).add(this.gradientArray.getRealVector(tt2));
+				//RealVector g = t0.add(t1).add(this.gradientArray.getRealVector(tt2));
+				RealVector g = t0.add(t1).add(tt2);
 //				this.routeFlowGradient.get(timeId).get(rId.getKey()).put(var, grad);
 				this.routeFlowGradient.get(timeId).put(rId.getKey(), g.toArray());
 			}
@@ -1318,21 +1334,24 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 				RealVector t1 = trUtGrad.subtract(modeC).mapMultiplyToSelf(pr*d*(1-pm)*anaParam.get(CNLSUEModel.ModeMiuName));
 //				double term2 = pr*(1-pm)*ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var)*d/params.get(var);
 //				double grad = term0 + term1 + term2;
-				Map<String,Double> tt2 = new HashMap<>();
-				for(String var1:this.gradientKeys) {
-					//double term2 = pr*pm*ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var1)*d/params.get(var1);
-					double term2 = pr*(1-pm)*ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var1)*d/params.get(var1);
-					tt2.put(var1, term2);
-				}
-				
-				RealVector g = t0.add(t1).add(this.gradientArray.getRealVector(tt2));
+				//Map<String,Double> tt2 = new HashMap<>();
+//				for(String var1:this.gradientKeys) {
+//					//double term2 = pr*pm*ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var1)*d/params.get(var1);
+//					double term2 = pr*(1-pm)*ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var1)*d/params.get(var1);
+//					tt2.put(var1, term2);
+//				}
+				RealVector odInc = MatrixUtils.createRealVector(this.odParameterIncidence.get(timeId).get(od.getKey()));
+				RealVector p = this.gradientArray.getRealVector(oparams);
+				RealVector tt2 = odInc.ebeDivide(p).mapMultiply(pr*(1-pm)*d);
+				//RealVector g = t0.add(t1).add(this.gradientArray.getRealVector(tt2));
+				RealVector g = t0.add(t1).add(tt2);
 //				this.trRouteFlowGradient.get(timeId).get(trUGrad.getKey()).put(var, grad);
 				this.trRouteFlowGradient.get(timeId).put(trUGrad.getKey(), g.toArray());
 			}
 //		}
 	});
 	
-	
+	if(this.ifODParameterIncidence)this.ifODParameterIncidence = false;
 	//finally the link volume and MaaSPackage usage gradient update
 	
 	this.linkGradient.get(timeId).entrySet().parallelStream().forEach(linkId->{
