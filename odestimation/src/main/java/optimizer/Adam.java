@@ -18,14 +18,15 @@ import core.MapToArray;
 
 public class Adam implements Optimizer{
 
-	private double alpha = .1;
+	private double alpha = .05;
 	private double beta1 = .9;
 	private double beta2 = 0.999;
 	private double eta = 10e-8;
+	private double c = 1000;
 	private Map<String,VariableDetails> variables = new HashMap<>();
 	//private Map<String,Double> m = new HashMap<>();
 	private RealVector m;
-	//private Map<String,Double> v = new HashMap<>();
+	//private Map<String,Double> v = new HashMap<>(); 
 	private RealVector v;
 	private int counter;
 	private final String id;
@@ -66,7 +67,11 @@ public class Adam implements Optimizer{
 		counter = 0;
 	}
 
+	/**
+	 * This will minimize
+	 */
 	public Map<String,VariableDetails> takeStep(Map<String,Double> gradient){
+		
 		counter = counter+1;
 		if(gradient==null) {
 			logger.debug("Gradient is null");
@@ -74,12 +79,18 @@ public class Adam implements Optimizer{
 		MapToArray<String> m2a = new MapToArray<String>("",this.variables.keySet());
 		RealVector p = m2a.getRealVector(this.variables.keySet().stream().collect(Collectors.toMap(k->k, k->this.variables.get(k).getCurrentValue())));
 		RealVector g = m2a.getRealVector(gradient);
-		m = p.mapMultiply(this.beta1).add(g.mapMultiply(1-beta1));
+		if(g.getNorm()>c*g.getDimension()) {//Clipping
+			g = g.mapDivide(g.getNorm()).mapMultiply(c*g.getDimension());
+		}
+		m = m.mapMultiply(this.beta1).add(g.mapMultiply(1-beta1));
 		v = v.mapMultiply(this.beta2).add(g.ebeMultiply(g).mapMultiply(1-this.beta2));
 		RealVector m_h = m.mapDivide(1-this.beta1);
 		RealVector v_h = v.mapDivide(1-this.beta2);
-		RealVector p_new = p.add(m_h.mapMultiply(this.alpha).ebeDivide(v_h.map(k->Math.sqrt(k))).mapAdd(this.eta));
+		RealVector p_new = p.add(m_h.mapMultiply(this.alpha).ebeDivide(v_h.map(k->Math.sqrt(k)).mapAdd(this.eta)));
 		for(Entry<String,Double> var:m2a.getMap(p_new.toArray()).entrySet()) {
+			Tuple<Double,Double> limit = this.variables.get(var.getKey()).getLimit();
+			if(var.getValue()>limit.getSecond())var.setValue(limit.getSecond());
+			else if(var.getValue()<limit.getFirst())var.setValue(limit.getFirst());
 			this.variables.get(var.getKey()).setCurrentValue(var.getValue());
 		}
 		
@@ -110,6 +121,13 @@ public class Adam implements Optimizer{
 		return this.variables;
 	}
 	
-	
+	public static void main(String[] args) {
+		Map<String,VariableDetails> vars = new HashMap<>();
+		vars.put("1",new VariableDetails("1",new Tuple<Double,Double>(1.0,10.0),5.0));
+		Adam adam = new Adam("test",vars);
+		Map<String,Double> grad = new HashMap<>();
+		grad.put("1", 0.);
+		adam.takeStep(grad);
+	}
 	
 }

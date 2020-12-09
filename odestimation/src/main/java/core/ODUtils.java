@@ -355,4 +355,13 @@ public class ODUtils {
 //		});
 //		return outGrad;
 	}
+	
+	public static void main(String[] args) {
+		RealVector g = MatrixUtils.createRealVector(new double[] {1, 2, 3});
+		g = g.add(g);
+		double[] c = g.toArray();
+		c = g.add(g).toArray();
+		System.out.println(g);
+		System.out.println(c);
+	}
 }

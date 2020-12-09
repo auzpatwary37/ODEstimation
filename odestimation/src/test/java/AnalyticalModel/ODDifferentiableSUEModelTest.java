@@ -149,16 +149,21 @@ class ODDifferentiableSUEModelTest {
 			}
 			Map<String,VariableDetails> Param = new HashMap<>();
 			for(String k:uniqueVars)Param.put(k, new VariableDetails(k, new Tuple<Double,Double>(0.1,8.), Math.sqrt(2.0)));
-			Optimizer adam = new Adam("odOptim",Param,0.01,0.9,.999,10e-8);
+			Optimizer adam = new Adam("odOptim",Param,0.05,0.9,.999,10e-8);
 			for(int counter = 0;counter<100;counter++) {
 				//System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
 				long t = System.currentTimeMillis();
+				singleTimeBean = new HashMap<>();
+				singleTimeBean.put(timeBean.getKey(),timeBean.getValue());
+				model = new ODDifferentiableSUEModel(singleTimeBean, config);
+				model.generateRoutesAndOD(scenario.getPopulation(), scenario.getNetwork(), odNetwork, scenario.getTransitSchedule(), scenario, fareCalculators);
 				LinkedHashMap<String,Double> params = new LinkedHashMap<>();
 				Param.values().stream().forEach(v->params.put(v.getVariableName(), v.getCurrentValue()));
 				Measurements modelMeasurements = model.perFormSUE(params, timeSplitMeasurements.get(timeBean.getKey()));
 				Map<String,Double> grad = ODUtils.calcODObjectiveGradient(timeSplitMeasurements.get(timeBean.getKey()), modelMeasurements, model);
+
 				Param = adam.takeStep(grad);
-				double objective = ObjectiveCalculator.calcObjective(originalMeasurements, modelMeasurements, ObjectiveCalculator.TypeMeasurementAndTimeSpecific);
+				double objective = ObjectiveCalculator.calcObjective(timeSplitMeasurements.get(timeBean.getKey()), modelMeasurements, ObjectiveCalculator.TypeMeasurementAndTimeSpecific);
 				System.out.println("Finished iteration "+counter);
 				System.out.println("Objective = "+objective);
 				final Map<String,VariableDetails> p = new LinkedHashMap<String,VariableDetails>(Param);
@@ -209,7 +214,7 @@ class ODDifferentiableSUEModelTest {
 		String iterLogerFileName = folderLoc+"/iterLogger"+timeBean+".csv";
 		try {
 			FileWriter fw = new FileWriter(new File(iterLogerFileName),true);
-			if(counter == 1)fw.append("Iterantion,timeId,Objective,GradNorm\n");
+			if(counter == 0)fw.append("Iterantion,timeId,Objective,GradNorm\n");
 			fw.append(counter+","+timeBean+","+objective+","+gradNorm+"\n");
 			fw.flush();
 			fw.close();

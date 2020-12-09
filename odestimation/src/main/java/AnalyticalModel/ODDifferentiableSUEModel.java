@@ -291,17 +291,17 @@ public void generateRoutesAndOD(Population population,Network network,Network od
 	}
 	this.fareCalculator = fareCalculator;
 	this.ts = transitSchedule;
-	this.population.getPersons().values().forEach(p->p.getPlans().clear());
+	//this.population.getPersons().values().forEach(p->p.getPlans().clear());
 	for(String timeBeanId:this.timeBeans.keySet()) {
 		this.consecutiveSUEErrorIncrease.put(timeBeanId, 0.);
 		this.Demand.put(timeBeanId, new HashMap<>(this.odPairs.getdemand(timeBeanId)));
 		for(Id<AnalyticalModelODpair> odId:this.Demand.get(timeBeanId).keySet()) {
 			double totalDemand=this.Demand.get(timeBeanId).get(odId);
+			AnalyticalModelODpair odpair = this.odPairs.getODpairset().get(odId);
 			this.carDemand.get(timeBeanId).put(odId, 0.5*totalDemand);
 			
-			AnalyticalModelODpair odpair=this.odPairs.getODpairset().get(odId);
 			if(odpair.getSubPopulation().contains("GV")) {
-				this.carDemand.get(timeBeanId).put(odId, totalDemand);
+				this.carDemand.get(timeBeanId).put(odId, totalDemand); 
 			}
 			//System.out.println();
 		}
@@ -427,7 +427,22 @@ private LinkedHashMap<String,Double> handleBasicParams(LinkedHashMap<String,Doub
 }
 
 public Measurements perFormSUE(LinkedHashMap<String, Double> params,Measurements originalMeasurements) {
-	ODUtils.applyODPairMultiplier(this.Demand, params,this.odPairs.getODpairset());
+	this.Demand = ODUtils.applyODPairMultiplier(this.Demand, params,this.odPairs.getODpairset());
+	for(String timeBeanId:this.timeBeans.keySet()) {
+		this.consecutiveSUEErrorIncrease.put(timeBeanId, 0.);
+		//this.Demand.put(timeBeanId, new HashMap<>(this.odPairs.getdemand(timeBeanId)));
+		for(Id<AnalyticalModelODpair> odId:this.Demand.get(timeBeanId).keySet()) {
+			double totalDemand=this.Demand.get(timeBeanId).get(odId);
+			AnalyticalModelODpair odpair = this.odPairs.getODpairset().get(odId);
+			this.carDemand.get(timeBeanId).put(odId, 0.5*totalDemand);
+			
+			if(odpair.getSubPopulation().contains("GV")) {
+				this.carDemand.get(timeBeanId).put(odId, totalDemand); 
+			}
+			//System.out.println();
+		}
+		
+	}
 	return this.performAssignment(params, this.AnalyticalModelInternalParams,originalMeasurements);
 }
 
@@ -1117,8 +1132,11 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 				double t_0 = link.getLength()/link.getFreespeed();//should be in sec
 				double cap = link.getCapacity()*(this.timeBeans.get(timeId).getSecond()-this.timeBeans.get(timeId).getFirst())/3600;
 				double beta = anaParam.get(ODDifferentiableSUEModel.BPRbetaName);
+				double alpha = anaParam.get(ODDifferentiableSUEModel.BPRalphaName);
+				double cons = alpha*beta*t_0/Math.pow(cap, beta)*Math.pow(flow,beta-1);
 				//double grad = anaParam.get(ODDifferentiableSUEModel.BPRalphaName)*beta*t_0/Math.pow(cap, beta)*Math.pow(flow,beta-1)*this.linkGradient.get(timeId).get(link.getId()).get(var.getKey());
-				double[] g = MatrixUtils.createRealVector(this.linkGradient.get(timeId).get(link.getId())).mapMultiplyToSelf(anaParam.get(ODDifferentiableSUEModel.BPRalphaName)*beta*t_0/Math.pow(cap, beta)*Math.pow(flow,beta-1)).toArray();
+				
+				double[] g = MatrixUtils.createRealVector(this.linkGradient.get(timeId).get(link.getId())).mapMultiply(cons).toArray();
 				//this.linkTTGradient.get(timeId).get(link.getId()).put(var.getKey(),grad);
 				this.linkTTGradient.get(timeId).put(link.getId(),g);
 			//}
@@ -1159,13 +1177,14 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 						double cap = dlink.getCapacity();
 						double freq = dlink.getFrequency();
 						double beta = anaParam.get(ODDifferentiableSUEModel.TransferbetaName);
-						double passengerTobeBorded = transferLink.getPassangerCount();
+						//double passengerTobeBorded = transferLink.getPassangerCount();
 						double passengerOnBord = plink.getTransitPassengerVolume(dlink.getLineId()+"_"+dlink.getRouteId());
-						double volume = passengerTobeBorded+passengerOnBord;
+						double volume = passengerOnBord;
 						double grad1 = beta*headway/Math.pow(cap*freq, beta)*Math.pow(volume, beta-1);//if both the second and first term is 
 						if(Double.isInfinite(grad1)||Double.isNaN(grad1))grad1 = 0;
 						//double grad2 = this.trLinkGradient.get(timeId).get(transferLink.getTrLinkId()).get(var.getKey());
-						RealVector g2 = MatrixUtils.createRealVector(this.trLinkGradient.get(timeId).get(transferLink.getTrLinkId()));
+						//RealVector g2 = MatrixUtils.createRealVector(this.trLinkGradient.get(timeId).get(transferLink.getTrLinkId()));//Why this?
+						RealVector g2 = MatrixUtils.createRealVector(new double[this.gradientKeys.size()]);
 						for(Id<TransitLink> l:transferLink.getIncidentLinkIds()){
 							//grad2+=this.trLinkGradient.get(timeId).get(l).get(var.getKey());
 							g2 = g2.add(MatrixUtils.createRealVector(this.trLinkGradient.get(timeId).get(l)));
@@ -1212,6 +1231,9 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 //				carUGrad+=this.routeProb.get(timeId).get(route.getRouteId())*uGradient;
 				carUGradient = carUGradient.add(uGrad.mapMultiply(this.routeProb.get(timeId).get(route.getRouteId())));
 			}
+			if(od.getValue().getRoutes().size()!=routeUGrad.size()) {
+				logger.debug("route size mismatch!!!");
+			}
 			}
 //			Map<Id<AnalyticalModelTransitRoute>,Double> trRouteUGradient = new HashMap<>();	
 			Map<Id<AnalyticalModelTransitRoute>,double[]> trRouteUGrad = new HashMap<>();
@@ -1245,15 +1267,15 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 				trRouteUGrad.put(trRoute.getTrRouteId(), g.toArray());
 				
 //				trUGradient += this.trRouteProb.get(timeId).get(trRoute.getTrRouteId())*grad;
-				trUtGrad.add(g.mapMultiply(this.trRouteProb.get(timeId).get(trRoute.getTrRouteId())));
+				trUtGrad = trUtGrad.add(g.mapMultiply(this.trRouteProb.get(timeId).get(trRoute.getTrRouteId())));
 			}
 			}
-			if(od.getValue().getSubPopulation()!=null && (od.getValue().getSubPopulation().contains("GV")||od.getValue().getSubPopulation().contains("trip"))) {
-				//carUGrad = 0;
-				carUGradient.mapMultiplyToSelf(0);
-				//trUGradient=0;
-				trUtGrad.mapMultiplyToSelf(0);
-			}
+//			if(od.getValue().getSubPopulation()!=null && (od.getValue().getSubPopulation().contains("GV")||od.getValue().getSubPopulation().contains("trip"))) {
+//				//carUGrad = 0;
+//				carUGradient.mapMultiplyToSelf(0);
+//				//trUGradient=0;
+//				trUtGrad.mapMultiplyToSelf(0);
+//			}
 			
 			//Calculate route flow gradient 
 			double pm = 0;
@@ -1261,18 +1283,18 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 //			double modeConst = pm*carUGrad+(1-pm)*trUGradient;
 			RealVector modeC = carUGradient.mapMultiply(pm).add(trUtGrad.mapMultiply(1-pm));
 			double d = this.Demand.get(timeId).get(od.getKey());
-			Map<String,Double> tt2 = new HashMap<>();
+			Map<String,Double> odInc = new HashMap<>();
 //			for(Entry<Id<AnalyticalModelRoute>, Double> rId:routeUGradient.entrySet()) {
 			for(Entry<Id<AnalyticalModelRoute>, double[]> rId:routeUGrad.entrySet()) {
 				double pr = this.routeProb.get(timeId).get(rId.getKey());
 		//		double term0 = pm*d*pr*anaParam.get(CNLSUEModel.LinkMiuName)*(rId.getValue()-carUGrad);
-				RealVector t0 = MatrixUtils.createRealVector(rId.getValue()).subtract(carUGradient).mapMultiplyToSelf(pm*d*pr*anaParam.get(CNLSUEModel.LinkMiuName));
+				RealVector t0 = MatrixUtils.createRealVector(rId.getValue()).subtract(carUGradient).mapMultiply(pm*d*pr*anaParam.get(CNLSUEModel.LinkMiuName));
 		//		double term1 = pr*d*pm*anaParam.get(CNLSUEModel.ModeMiuName)*(carUGrad-modeConst);
-				RealVector t1 = carUGradient.subtract(modeC).mapMultiplyToSelf(pr*d*pm*anaParam.get(CNLSUEModel.ModeMiuName));
-				
+				RealVector t1 = carUGradient.subtract(modeC).mapMultiply(pr*d*pm*anaParam.get(CNLSUEModel.ModeMiuName));
+				Map<String,Double> tt2 = new HashMap<>();
 				for(String var1:this.gradientKeys) {
 					//double term2 = pr*pm*ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var1)*d/params.get(var1);
-					double term2 = pr*ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var1)*d/params.get(var1);
+					double term2 = pr*pm*ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var1)*d/params.get(var1);
 					tt2.put(var1, term2);
 				}
 //				if(tt2.size()!=this.gradientKeys.size()) {
@@ -1282,7 +1304,7 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 //					System.out.println();
 //				}
 //				double grad = term0 + term1 + term2;
-				RealVector g = t0.add(t1).add(this.gradientArray.getRealVector(tt2).mapMultiplyToSelf(pm));
+				RealVector g = t0.add(t1).add(this.gradientArray.getRealVector(tt2));
 //				this.routeFlowGradient.get(timeId).get(rId.getKey()).put(var, grad);
 				this.routeFlowGradient.get(timeId).put(rId.getKey(), g.toArray());
 			}
@@ -1296,7 +1318,14 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 				RealVector t1 = trUtGrad.subtract(modeC).mapMultiplyToSelf(pr*d*(1-pm)*anaParam.get(CNLSUEModel.ModeMiuName));
 //				double term2 = pr*(1-pm)*ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var)*d/params.get(var);
 //				double grad = term0 + term1 + term2;
-				RealVector g = t0.add(t1).add(this.gradientArray.getRealVector(tt2).mapMultiplyToSelf(1-pm));
+				Map<String,Double> tt2 = new HashMap<>();
+				for(String var1:this.gradientKeys) {
+					//double term2 = pr*pm*ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var1)*d/params.get(var1);
+					double term2 = pr*(1-pm)*ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var1)*d/params.get(var1);
+					tt2.put(var1, term2);
+				}
+				
+				RealVector g = t0.add(t1).add(this.gradientArray.getRealVector(tt2));
 //				this.trRouteFlowGradient.get(timeId).get(trUGrad.getKey()).put(var, grad);
 				this.trRouteFlowGradient.get(timeId).put(trUGrad.getKey(), g.toArray());
 			}
