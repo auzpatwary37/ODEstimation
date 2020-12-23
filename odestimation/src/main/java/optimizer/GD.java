@@ -1,28 +1,42 @@
 package optimizer;
 
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
+import java.util.stream.Collectors;
 
+import org.apache.commons.math3.linear.RealVector;
 import org.matsim.api.core.v01.population.Plan;
 import org.matsim.core.utils.collections.Tuple;
 
+import core.MapToArray;
 
+import org.jboss.logging.Logger;
 
 public class GD implements Optimizer{
 	
-	private double alpha = .001;
+	private double alpha = .0005;
 	private int counter;
 	private final String id;
 	private Map<String,VariableDetails> variables;
-
+	private static final Logger logger = Logger.getLogger(GD.class);
+	private double c = 1000;
+	
 	public GD(String id, Map<String,VariableDetails> variables) {
 		this.variables = variables;
 		this.id = id;
 	}
 	
-	public GD(String id, Map<String,VariableDetails> variables,double alpha) {
+	public GD(String id, Map<String,VariableDetails> variables,double alpha,double c) {
 		this.variables = variables;
 		this.alpha = alpha;
 		this.id = id;
+		this.c = c;
 	}
 	
 	public GD(Plan maasAgentPlan) {
@@ -35,14 +49,27 @@ public class GD implements Optimizer{
 	@Override
 	public Map<String, VariableDetails> takeStep(Map<String, Double> gradient) {
 		counter = counter+1;
+		if(gradient==null) {
+			logger.debug("Gradient is null");
+		}
+		MapToArray<String> m2a = new MapToArray<String>("",this.variables.keySet());
+		RealVector p = m2a.getRealVector(this.variables.keySet().stream().collect(Collectors.toMap(k->k, k->this.variables.get(k).getCurrentValue())));
+		RealVector g = m2a.getRealVector(gradient);
+		if(g.getNorm()>c*g.getDimension()) {//Clipping
+			if(!Double.isInfinite(g.getNorm())) {
+				g = g.mapDivide(g.getNorm()).mapMultiply(c*g.getDimension());
+			}else {
+				g = g.mapDivide(g.getL1Norm()).mapMultiply(c*g.getDimension());
+			}
+		}
 		
-		gradient.entrySet().parallelStream().forEach(g->{
-			double var = this.variables.get(g.getKey()).getCurrentValue() + this.alpha*g.getValue();
-			Tuple<Double,Double> limit = this.variables.get(g.getKey()).getLimit();
-			if(var<limit.getFirst()) var = limit.getFirst();
-			else if (var>limit.getSecond()) var = limit.getSecond();
-			this.variables.get(g.getKey()).setCurrentValue(var);
-		});
+		RealVector p_new = p.add(g.mapMultiply(this.alpha));
+		for(Entry<String,Double> var:m2a.getMap(p_new.toArray()).entrySet()) {
+			Tuple<Double,Double> limit = this.variables.get(var.getKey()).getLimit();
+			if(var.getValue()>limit.getSecond())var.setValue(limit.getSecond());
+			else if(var.getValue()<limit.getFirst())var.setValue(limit.getFirst());
+			this.variables.get(var.getKey()).setCurrentValue(var.getValue());
+		}
 		
 		return this.variables;
 	}
@@ -57,6 +84,6 @@ public class GD implements Optimizer{
 		return this.variables;
 	}
 	
-	
+
 
 }

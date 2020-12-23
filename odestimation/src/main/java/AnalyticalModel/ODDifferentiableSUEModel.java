@@ -118,7 +118,7 @@ private Map<String,Map<Id<AnalyticalModelRoute>,Double>> routeFlow = new HashMap
 private Map<String,Map<Id<AnalyticalModelTransitRoute>,Double>> trRouteFlow = new HashMap<>();
 
 private Map<String,Map<Id<AnalyticalModelODpair>,Double>> carProbability = new HashMap<>();
-
+private double linkGradL1NormThreshold = 1000;
 //The gradient containers
 //time->id->varKey->grad
 private Map<Id<AnalyticalModelODpair>,List<Id<AnalyticalModelRoute>>> routeODIncidence = new HashMap<>();
@@ -160,8 +160,12 @@ private Map<String,Map<Id<AnalyticalModelODpair>,double[]>>odParameterIncidence 
 private boolean ifODParameterIncidence = true;
 //This are needed for output generation 
 
-
-
+private double[] gradMultiplier;
+private boolean ifGradMultiply = true;
+private double maxAbsGrad = .2;
+private double minAbsGrad = 0.01;
+private double maxAbsL1Norm = 1e150;
+private double minAbsL1Norm = 1e-150;
 
 protected Map<String,Map<Id<Link>,Double>> outputLinkTT=new ConcurrentHashMap<>();
 protected Map<String,Map<Id<TransitLink>,Double>> outputTrLinkTT=new ConcurrentHashMap<>();
@@ -512,8 +516,8 @@ public SUEModelOutput singleTimeBeanTA(LinkedHashMap<String, Double> params,Link
 	Map<String,Map<String,Double>> fareLinkVolume = new HashMap<>();
 	fareLinkVolume.put(timeBeanId, new HashMap<>());
 	boolean shouldStop=false;
-	
-	for(int i=1;i<500;i++) {
+//	boolean firstTimeGradCalc = true;
+	for(int i=1;i<70;i++) {
 		//for(this.car)
 		//ConcurrentHashMap<String,HashMap<Id<CNLODpair>,Double>>demand=this.Demand;
 		linkCarVolume=this.performCarNetworkLoading(timeBeanId,i,params,anaParams);
@@ -522,7 +526,15 @@ public SUEModelOutput singleTimeBeanTA(LinkedHashMap<String, Double> params,Link
 		//System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
 		shouldStop=this.CheckConvergence(linkCarVolume, linkTransitVolume, this.tollerance, timeBeanId,i);
 		///the beta should already be calculated by this line. 
+//		double updateRatio = 1/this.beta.get(timeBeanId).get(i-1);
+//		if(updateRatio>0.20 || i<20) {
+//		//	if(firstTimeGradCalc) {
+//				this.caclulateGradient(timeBeanId, i, params, anaParams,true);
+//				firstTimeGradCalc = false;
+//			}else {
 		this.caclulateGradient(timeBeanId, i, params, anaParams);
+		//	}
+//		}
 		System.out.println("Finished gradient Calculation");
 		
 		this.UpdateLinkVolume(linkCarVolume, linkTransitVolume, i, timeBeanId);
@@ -569,7 +581,7 @@ public SUEModelOutput singleTimeBeanTA(LinkedHashMap<String, Double> params,Link
 				}
 				fareLinkVolume.get(timeBeanId).put(fl.getKey(),flow);
 			});
-			
+			this.scaleBackGradients();
 			break;
 			
 			}
@@ -1071,7 +1083,7 @@ public void initializeGradients(LinkedHashMap<String,Double> Oparams) {
 //	this.gradientKeys.forEach(k->{
 //		zeroGrad.put(k, 0.);
 //	});
-	
+	this.gradMultiplier = MatrixUtils.createRealVector(new double[this.gradientKeys.size()]).mapAdd(1.).toArray();
 	for(String timeId:this.timeBeans.keySet()) {
 		this.linkGradient.put(timeId, new HashMap<>());
 		//this.linkGradient.get(timeId).putAll(this.networks.get(timeId).getLinks().keySet().parallelStream().collect(Collectors.toMap(kk->kk, kk->new HashMap<>(zeroGrad))));
@@ -1106,9 +1118,9 @@ public void initializeGradients(LinkedHashMap<String,Double> Oparams) {
 		this.odParameterIncidence.get(timeId).putAll(this.odPairs.getODpairset().keySet().parallelStream().collect(Collectors.toMap(kk->kk, kk->new double[this.gradientKeys.size()])));
 	}
 	this.intiializeGradient = false;
+	this.linkGradL1NormThreshold = this.gradientKeys.size()*3600;
 	logger.info("Finished initializing gradients");
 }
-
 
 /**
  * This is a huge step forward. This class can calculate gradient using backpropagation
@@ -1119,6 +1131,18 @@ public void initializeGradients(LinkedHashMap<String,Double> Oparams) {
  * @param anaParam
  */
 public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,Double> oparams, LinkedHashMap<String,Double>anaParam) {
+	this.caclulateGradient(timeId, counter, oparams, anaParam, false);
+}
+
+/**
+ * This is a huge step forward. This class can calculate gradient using backpropagation
+ * Still not checked
+ * @param population
+ * @param counter
+ * @param Oparams
+ * @param anaParam
+ */
+public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,Double> oparams, LinkedHashMap<String,Double>anaParam, boolean useUnitUpdateWeight) {
 	//RealVector p = null;
 	
 	if(this.intiializeGradient) {//maybe its better to do it once in the generate od pair and then not do it again 
@@ -1136,12 +1160,15 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 				double cap = link.getCapacity()*(this.timeBeans.get(timeId).getSecond()-this.timeBeans.get(timeId).getFirst())/3600;
 				double beta = anaParam.get(ODDifferentiableSUEModel.BPRbetaName);
 				double alpha = anaParam.get(ODDifferentiableSUEModel.BPRalphaName);
-				double cons = alpha*beta*t_0/Math.pow(cap, beta)*Math.pow(flow,beta-1);
+				double cons = alpha*beta*t_0/Math.pow(cap, beta)*Math.pow(flow,beta-1)/3600;
 				//double grad = anaParam.get(ODDifferentiableSUEModel.BPRalphaName)*beta*t_0/Math.pow(cap, beta)*Math.pow(flow,beta-1)*this.linkGradient.get(timeId).get(link.getId()).get(var.getKey());
-				
+				if(cons>3600) {
+					logger.debug("timeGradient is too high");
+				}
 				double[] g = MatrixUtils.createRealVector(this.linkGradient.get(timeId).get(link.getId())).mapMultiply(cons).toArray();
 				//this.linkTTGradient.get(timeId).get(link.getId()).put(var.getKey(),grad);
 				this.linkTTGradient.get(timeId).put(link.getId(),g);
+				
 			//}
 			
 		});
@@ -1183,7 +1210,10 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 						//double passengerTobeBorded = transferLink.getPassangerCount();
 						double passengerOnBord = plink.getTransitPassengerVolume(dlink.getLineId()+"_"+dlink.getRouteId());
 						double volume = passengerOnBord;
-						double grad1 = beta*headway/Math.pow(cap*freq, beta)*Math.pow(volume, beta-1);//if both the second and first term is 
+						double grad1 = beta*headway/Math.pow(cap*freq, beta)*Math.pow(volume, beta-1)/3600;//if both the second and first term is 
+						if(grad1>3600) {
+							logger.debug("waiting time gradient is too high!");
+						}
 						if(Double.isInfinite(grad1)||Double.isNaN(grad1))grad1 = 0;
 						//double grad2 = this.trLinkGradient.get(timeId).get(transferLink.getTrLinkId()).get(var.getKey());
 						//RealVector g2 = MatrixUtils.createRealVector(this.trLinkGradient.get(timeId).get(transferLink.getTrLinkId()));//Why this?
@@ -1194,6 +1224,7 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 						}
 						//grad = grad1*grad2;
 						g = g2.mapMultiply(grad1).toArray();
+						
 					}else {
 						grad = 0;
 					}
@@ -1285,9 +1316,14 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 			if(this.carProbability.get(timeId).get(od.getKey())!=null) pm = this.carProbability.get(timeId).get(od.getKey()); 
 //			double modeConst = pm*carUGrad+(1-pm)*trUGradient;
 			RealVector modeC = carUGradient.mapMultiply(pm).add(trUtGrad.mapMultiply(1-pm));
+			if(modeC.getNorm()>20000) {
+				logger.debug("Too High mode const");
+			}
 			double d = this.Demand.get(timeId).get(od.getKey());
 			//Map<String,Double> odInc = new HashMap<>();
 //			for(Entry<Id<AnalyticalModelRoute>, Double> rId:routeUGradient.entrySet()) {
+			
+			
 			for(Entry<Id<AnalyticalModelRoute>, double[]> rId:routeUGrad.entrySet()) {
 				double pr = this.routeProb.get(timeId).get(rId.getKey());
 		//		double term0 = pm*d*pr*anaParam.get(CNLSUEModel.LinkMiuName)*(rId.getValue()-carUGrad);
@@ -1306,7 +1342,7 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 				}
 				RealVector odInc = MatrixUtils.createRealVector(this.odParameterIncidence.get(timeId).get(od.getKey()));
 				RealVector p = this.gradientArray.getRealVector(oparams);
-				RealVector tt2 = odInc.ebeDivide(p).mapMultiply(pr*pm*d);
+				RealVector tt2 = odInc.ebeDivide(p).mapMultiply(pr*pm*d).ebeDivide(MatrixUtils.createRealVector(this.gradMultiplier));
 //				for(String var1:this.gradientKeys) {
 //					//double term2 = pr*pm*ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var1)*d/params.get(var1);
 //					double term2 = pr*pm*ODUtils.ifMatch_1_else_0(od.getKey(),this.odPairs.getODpairset().get(od.getKey()).getSubPopulation(), timeId, var1)*d/params.get(var1);
@@ -1322,6 +1358,9 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 				//RealVector g = t0.add(t1).add(this.gradientArray.getRealVector(tt2));
 				RealVector g = t0.add(t1).add(tt2);
 //				this.routeFlowGradient.get(timeId).get(rId.getKey()).put(var, grad);
+				if(g.isInfinite()||g.isNaN()) {
+					logger.error("Nan or infinite gradient!!! Check");
+				}
 				this.routeFlowGradient.get(timeId).put(rId.getKey(), g.toArray());
 			}
 			
@@ -1342,14 +1381,64 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 //				}
 				RealVector odInc = MatrixUtils.createRealVector(this.odParameterIncidence.get(timeId).get(od.getKey()));
 				RealVector p = this.gradientArray.getRealVector(oparams);
-				RealVector tt2 = odInc.ebeDivide(p).mapMultiply(pr*(1-pm)*d);
+				RealVector tt2 = odInc.ebeDivide(p).mapMultiply(pr*(1-pm)*d).ebeDivide(MatrixUtils.createRealVector(this.gradMultiplier));
 				//RealVector g = t0.add(t1).add(this.gradientArray.getRealVector(tt2));
 				RealVector g = t0.add(t1).add(tt2);
 //				this.trRouteFlowGradient.get(timeId).get(trUGrad.getKey()).put(var, grad);
 				this.trRouteFlowGradient.get(timeId).put(trUGrad.getKey(), g.toArray());
 			}
 //		}
+		//this.applyODBasedGradeintClipping(routeUGrad.keySet(), trRouteUGrad.keySet(), od.getKey(), timeId);
 	});
+	if(this.ifGradMultiply && (counter == 1||counter%10==0)) {//For a newly started TA cycle, both t0 and t1 terms in transit and car routes are zero. 
+		//As a result, that is used to derive the gradient multiplier. The multiplier can be directly applied to the route and tr route gradient as well for the same reason
+		// However, at later stage the old gradient is added with the new gradient. So, to make the basis of the two gradient same, the multiplier has to be added at the variable gradient source. 
+		//In this model, which is vector tt2 in lines 1344 and 1380. Ashraf, Dec20.
+		double[] m = new double[this.gradientKeys.size()];
+		for(Entry<String, Map<Id<AnalyticalModelRoute>, double[]>> t:this.routeFlowGradient.entrySet()){
+			for(double[]d:t.getValue().values())m =findAbsMax(m,d);
+		}
+		
+		for(Entry<String, Map<Id<AnalyticalModelTransitRoute>, double[]>> t:this.trRouteFlowGradient.entrySet()){
+			for(double[]d:t.getValue().values())m =findAbsMax(m,d);
+		}
+		
+		if(counter == 1) {
+			for(int i = 0;i<m.length;i++) {
+				if(m[i]!=0 && (m[i]>this.maxAbsGrad||m[i]<this.minAbsGrad)) {
+					this.gradMultiplier[i] =2*m[i]/(this.maxAbsGrad+this.minAbsGrad);
+					if(Double.isInfinite(2*m[i]/(this.maxAbsGrad+this.minAbsGrad))||Double.isNaN(2*m[i]/(this.maxAbsGrad+this.minAbsGrad))||2*m[i]/(this.maxAbsGrad+this.minAbsGrad)==0) {
+						logger.debug("multiplier is either infinite, nan or 0!!!");
+					}
+				}
+			}
+			this.routeFlowGradient.values().forEach(t->{
+				t.values().forEach(d->{
+					for(int i = 0;i<d.length;i++)d[i]=d[i]/this.gradMultiplier[i];
+				});
+			});
+			
+			this.trRouteFlowGradient.values().forEach(t->{
+				t.values().forEach(d->{
+					for(int i = 0;i<d.length;i++)d[i]=d[i]/this.gradMultiplier[i];
+				});
+			});
+		}else {
+			double norm = 0;
+			for(double d:m)norm+=Math.abs(d);
+			if(Double.isInfinite(norm)) {
+				logger.debug("max grad norm infinity!!!");
+			}
+			if(norm>this.maxAbsL1Norm) {
+				this.scaleBackGradients();
+				this.gradMultiplier = MatrixUtils.createRealVector(new double[m.length]).mapAdd(1).mapMultiply(norm/this.maxAbsL1Norm).toArray();
+			}
+			this.scaleGradients();
+		}
+
+	}
+	
+	
 	
 	if(this.ifODParameterIncidence)this.ifODParameterIncidence = false;
 	//finally the link volume and MaaSPackage usage gradient update
@@ -1364,8 +1453,12 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 //				grad+=this.routeFlowGradient.get(timeId).get(r).get(var);
 				g = g.add(MatrixUtils.createRealVector(this.routeFlowGradient.get(timeId).get(r)));
 			}
+			//double norm = 0;
+			//if((norm = g.getL1Norm())>this.linkGradL1NormThreshold)g = g.mapDivide(norm).mapMultiply(this.linkGradL1NormThreshold);
 //			double gradUpdate = oldGrad + (grad-oldGrad)*(1/this.beta.get(timeId).get(counter-1));
-			RealVector gUpdate = old.add(g.subtract(old).mapMultiplyToSelf((1/this.beta.get(timeId).get(counter-1))));
+			double updateWeight = 1/this.beta.get(timeId).get(counter-1);
+			if(useUnitUpdateWeight) updateWeight = 1;
+			RealVector gUpdate = old.add(g.subtract(old).mapMultiplyToSelf(updateWeight));
 //			this.linkGradient.get(timeId).get(linkId.getKey()).put(var, gradUpdate);
 			this.linkGradient.get(timeId).put(linkId.getKey(),gUpdate.toArray());
 //		}
@@ -1393,8 +1486,12 @@ public void caclulateGradient(String timeId, int counter, LinkedHashMap<String,D
 					g = g.add(MatrixUtils.createRealVector(this.trRouteFlowGradient.get(timeId).get(r)));
 				}
 			}
+			//double norm = 0;
+			//if((norm = g.getL1Norm())>this.linkGradL1NormThreshold)g = g.mapDivide(norm).mapMultiply(this.linkGradL1NormThreshold);
 //			double gradUpdate = oldGrad + (grad-oldGrad)*(1/this.beta.get(timeId).get(counter-1));
-			RealVector gradU = old.add(g.subtract(old).mapMultiplyToSelf((1/this.beta.get(timeId).get(counter-1))));
+			double updateWeight = 1/this.beta.get(timeId).get(counter-1);
+			if(useUnitUpdateWeight) updateWeight = 1;
+			RealVector gradU = old.add(g.subtract(old).mapMultiplyToSelf(updateWeight));
 			
 //			this.trLinkGradient.get(timeId).get(linkId.getKey()).put(var, gradUpdate);
 			this.trLinkGradient.get(timeId).put(linkId.getKey(), gradU.toArray());
@@ -1755,6 +1852,225 @@ public MapToArray<String> getGradientArray() {
 }
 
 
+private void applyODBasedGradeintClipping(Map<Id<AnalyticalModelRoute>,double[]>routeGrad,Map<Id<AnalyticalModelTransitRoute>,double[]>trRouteGrad,Id<AnalyticalModelODpair> odId,String timeBeanId) {
+	RealVector delta = MatrixUtils.createRealVector(this.odParameterIncidence.get(timeBeanId).get(odId));
+	RealVector norm = MatrixUtils.createRealVector(new double[delta.toArray().length]);
+	for(double[] g:routeGrad.values())norm = norm.add(MatrixUtils.createRealVector(g).map(k->Math.abs(k)));
+	for(double[] g:trRouteGrad.values())norm = norm.add(MatrixUtils.createRealVector(g).map(k->Math.abs(k)));
+	RealVector demand  =  delta.mapAdd(2).mapMultiply(this.Demand.get(timeBeanId).get(odId));
+	RealVector multiplier = demand.ebeDivide(norm);
+	RealVector m = demand.subtract(norm).map(k->k>0?1:0).ebeMultiply(multiplier).map(k->k==0?1:k);
+	multiplier = multiplier.ebeDivide(m);
+	
+	for(Entry<Id<AnalyticalModelRoute>,double[]> g:routeGrad.entrySet())g.setValue(MatrixUtils.createRealVector(g.getValue()).ebeMultiply(multiplier).toArray());
+	for(Entry<Id<AnalyticalModelTransitRoute>,double[]> g:trRouteGrad.entrySet())g.setValue(MatrixUtils.createRealVector(g.getValue()).ebeMultiply(multiplier).toArray());
+}
 
+private void applyODBasedGradeintClipping(Set<Id<AnalyticalModelRoute>>routeIds,Set<Id<AnalyticalModelTransitRoute>>trRouteIds,Id<AnalyticalModelODpair> odId,String timeBeanId) {
+	RealVector delta = MatrixUtils.createRealVector(this.odParameterIncidence.get(timeBeanId).get(odId));
+	RealVector norm = MatrixUtils.createRealVector(new double[delta.toArray().length]);
+	for(Id<AnalyticalModelRoute> rId:routeIds)norm = norm.add(MatrixUtils.createRealVector(this.routeFlowGradient.get(timeBeanId).get(rId)).map(k->Math.abs(k)));
+	for(Id<AnalyticalModelTransitRoute> rId:trRouteIds)norm = norm.add(MatrixUtils.createRealVector(this.trRouteFlowGradient.get(timeBeanId).get(rId)).map(k->Math.abs(k)));
+	RealVector demand  =  delta.mapAdd(2).mapMultiply(this.Demand.get(timeBeanId).get(odId));
+	RealVector multiplier = demand.ebeDivide(norm);
+	RealVector m = demand.subtract(norm).map(k->k>0?1:0).ebeMultiply(multiplier).map(k->k==0?1:k);
+	multiplier = multiplier.ebeDivide(m);
+	for(Id<AnalyticalModelRoute> rId:routeIds)this.routeFlowGradient.get(timeBeanId).put(rId, MatrixUtils.createRealVector(this.routeFlowGradient.get(timeBeanId).get(rId)).ebeMultiply(multiplier).toArray());
+	for(Id<AnalyticalModelTransitRoute> rId:trRouteIds)this.trRouteFlowGradient.get(timeBeanId).put(rId, MatrixUtils.createRealVector(this.trRouteFlowGradient.get(timeBeanId).get(rId)).ebeMultiply(multiplier).toArray());
+}
 
+private void applyVerticalGradeintClipping(Set<Id<AnalyticalModelRoute>>routeIds,Set<Id<AnalyticalModelTransitRoute>>trRouteIds,Id<AnalyticalModelODpair> odId,String timeBeanId) {
+	RealVector delta = MatrixUtils.createRealVector(this.odParameterIncidence.get(timeBeanId).get(odId));
+	RealVector norm = MatrixUtils.createRealVector(new double[delta.toArray().length]);
+	for(Id<AnalyticalModelRoute> rId:routeIds)norm = norm.add(MatrixUtils.createRealVector(this.routeFlowGradient.get(timeBeanId).get(rId)).map(k->Math.abs(k)));
+	for(Id<AnalyticalModelTransitRoute> rId:trRouteIds)norm = norm.add(MatrixUtils.createRealVector(this.trRouteFlowGradient.get(timeBeanId).get(rId)).map(k->Math.abs(k)));
+	RealVector demand  =  delta.mapAdd(2).mapMultiply(this.Demand.get(timeBeanId).get(odId));
+	RealVector multiplier = demand.ebeDivide(norm);
+	RealVector m = demand.subtract(norm).map(k->k>0?1:0).ebeMultiply(multiplier).map(k->k==0?1:k);
+	multiplier = multiplier.ebeDivide(m);
+	for(Id<AnalyticalModelRoute> rId:routeIds)this.routeFlowGradient.get(timeBeanId).put(rId, MatrixUtils.createRealVector(this.routeFlowGradient.get(timeBeanId).get(rId)).ebeMultiply(multiplier).toArray());
+	for(Id<AnalyticalModelTransitRoute> rId:trRouteIds)this.trRouteFlowGradient.get(timeBeanId).put(rId, MatrixUtils.createRealVector(this.trRouteFlowGradient.get(timeBeanId).get(rId)).ebeMultiply(multiplier).toArray());
+}
+
+public static double[] findAbsMax(double[]a,double[]b){
+	double[] out = new double[a.length];
+	 for(int i = 0;i<a.length;i++) {
+		out[i] = Double.max(Math.abs(a[i]),Math.abs(b[i]));
+	}
+	return out; 
+}
+
+private void scaleBackGradients() {
+	RealVector m = MatrixUtils.createRealVector(this.gradMultiplier);
+	this.routeFlowGradient.entrySet().forEach(t->{
+		t.getValue().entrySet().forEach(d->{
+			RealVector dd = MatrixUtils.createRealVector(d.getValue()).ebeMultiply(m); 
+			if(dd.isInfinite()||dd.isNaN()) {
+				logger.debug("gradient infinite or nan!!!");
+			}
+			d.setValue(dd.toArray());
+//			for(int i = 0;i<d.length;i++)
+//				d[i] = d[i]*this.gradMultiplier[i];
+		});
+	});
+	
+	this.trRouteFlowGradient.entrySet().forEach(t->{
+		t.getValue().entrySet().forEach(d->{
+			RealVector dd = MatrixUtils.createRealVector(d.getValue()).ebeMultiply(m); 
+			if(dd.isInfinite()||dd.isNaN()) {
+				logger.debug("gradient infinite or nan!!!");
+			}
+			d.setValue(dd.toArray());
+//			for(int i = 0;i<d.length;i++)
+//				d[i] = d[i]*this.gradMultiplier[i];
+		});
+	});
+	
+	this.linkGradient.entrySet().forEach(t->{
+		t.getValue().entrySet().forEach(d->{
+			RealVector dd = MatrixUtils.createRealVector(d.getValue()).ebeMultiply(m); 
+			if(dd.isInfinite()||dd.isNaN()) {
+				logger.debug("gradient infinite or nan!!!");
+			}
+			d.setValue(dd.toArray());
+//			for(int i = 0;i<d.length;i++)
+//				d[i] = d[i]*this.gradMultiplier[i];
+		});
+	});
+	
+	this.trLinkGradient.entrySet().forEach(t->{
+		t.getValue().entrySet().forEach(d->{
+			RealVector dd = MatrixUtils.createRealVector(d.getValue()).ebeMultiply(m); 
+			if(dd.isInfinite()||dd.isNaN()) {
+				logger.debug("gradient infinite or nan!!!");
+			}
+			d.setValue(dd.toArray());
+//			for(int i = 0;i<d.length;i++)
+//				d[i] = d[i]*this.gradMultiplier[i];
+		});
+	});
+	
+	this.linkTTGradient.entrySet().forEach(t->{
+		t.getValue().entrySet().forEach(d->{
+			RealVector dd = MatrixUtils.createRealVector(d.getValue()).ebeMultiply(m); 
+			if(dd.isInfinite()||dd.isNaN()) {
+				logger.debug("gradient infinite or nan!!!");
+			}
+			d.setValue(dd.toArray());
+//			for(int i = 0;i<d.length;i++)
+//				d[i] = d[i]*this.gradMultiplier[i];
+		});
+	});
+	
+	this.trLinkTTGradient.entrySet().forEach(t->{
+		t.getValue().entrySet().forEach(d->{
+			RealVector dd = MatrixUtils.createRealVector(d.getValue()).ebeMultiply(m); 
+			if(dd.isInfinite()||dd.isNaN()) {
+				logger.debug("gradient infinite or nan!!!");
+			}
+			d.setValue(dd.toArray());
+//			for(int i = 0;i<d.length;i++)
+//				d[i] = d[i]*this.gradMultiplier[i];
+		});
+	});
+	
+	this.fareLinkGradient.entrySet().forEach(t->{
+		t.getValue().entrySet().forEach(d->{
+			RealVector dd = MatrixUtils.createRealVector(d.getValue()).ebeMultiply(m); 
+			if(dd.isInfinite()||dd.isNaN()) {
+				logger.debug("gradient infinite or nan!!!");
+			}
+			d.setValue(dd.toArray());
+//			for(int i = 0;i<d.length;i++)
+//				d[i] = d[i]*this.gradMultiplier[i];
+		});
+	});
+}
+
+private void scaleGradients() {
+	RealVector m = MatrixUtils.createRealVector(this.gradMultiplier);
+	this.routeFlowGradient.entrySet().forEach(t->{
+		t.getValue().entrySet().forEach(d->{
+			RealVector dd = MatrixUtils.createRealVector(d.getValue()).ebeDivide(m); 
+			if(dd.isInfinite()||dd.isNaN()) {
+				logger.debug("gradient infinite or nan!!!");
+			}
+			d.setValue(dd.toArray());
+//			for(int i = 0;i<d.length;i++)
+//				d[i] = d[i]*this.gradMultiplier[i];
+		});
+	});
+	
+	this.trRouteFlowGradient.entrySet().forEach(t->{
+		t.getValue().entrySet().forEach(d->{
+			RealVector dd = MatrixUtils.createRealVector(d.getValue()).ebeDivide(m); 
+			if(dd.isInfinite()||dd.isNaN()) {
+				logger.debug("gradient infinite or nan!!!");
+			}
+			d.setValue(dd.toArray());
+//			for(int i = 0;i<d.length;i++)
+//				d[i] = d[i]*this.gradMultiplier[i];
+		});
+	});
+	
+	this.linkGradient.entrySet().forEach(t->{
+		t.getValue().entrySet().forEach(d->{
+			RealVector dd = MatrixUtils.createRealVector(d.getValue()).ebeDivide(m); 
+			if(dd.isInfinite()||dd.isNaN()) {
+				logger.debug("gradient infinite or nan!!!");
+			}
+			d.setValue(dd.toArray());
+//			for(int i = 0;i<d.length;i++)
+//				d[i] = d[i]*this.gradMultiplier[i];
+		});
+	});
+	
+	this.trLinkGradient.entrySet().forEach(t->{
+		t.getValue().entrySet().forEach(d->{
+			RealVector dd = MatrixUtils.createRealVector(d.getValue()).ebeDivide(m); 
+			if(dd.isInfinite()||dd.isNaN()) {
+				logger.debug("gradient infinite or nan!!!");
+			}
+			d.setValue(dd.toArray());
+//			for(int i = 0;i<d.length;i++)
+//				d[i] = d[i]*this.gradMultiplier[i];
+		});
+	});
+	
+	this.linkTTGradient.entrySet().forEach(t->{
+		t.getValue().entrySet().forEach(d->{
+			RealVector dd = MatrixUtils.createRealVector(d.getValue()).ebeDivide(m); 
+			if(dd.isInfinite()||dd.isNaN()) {
+				logger.debug("gradient infinite or nan!!!");
+			}
+			d.setValue(dd.toArray());
+//			for(int i = 0;i<d.length;i++)
+//				d[i] = d[i]*this.gradMultiplier[i];
+		});
+	});
+	
+	this.trLinkTTGradient.entrySet().forEach(t->{
+		t.getValue().entrySet().forEach(d->{
+			RealVector dd = MatrixUtils.createRealVector(d.getValue()).ebeDivide(m); 
+			if(dd.isInfinite()||dd.isNaN()) {
+				logger.debug("gradient infinite or nan!!!");
+			}
+			d.setValue(dd.toArray());
+//			for(int i = 0;i<d.length;i++)
+//				d[i] = d[i]*this.gradMultiplier[i];
+		});
+	});
+	
+	this.fareLinkGradient.entrySet().forEach(t->{
+		t.getValue().entrySet().forEach(d->{
+			RealVector dd = MatrixUtils.createRealVector(d.getValue()).ebeDivide(m); 
+			if(dd.isInfinite()||dd.isNaN()) {
+				logger.debug("gradient infinite or nan!!!");
+			}
+			d.setValue(dd.toArray());
+//			for(int i = 0;i<d.length;i++)
+//				d[i] = d[i]*this.gradMultiplier[i];
+		});
+	});
+}
 }

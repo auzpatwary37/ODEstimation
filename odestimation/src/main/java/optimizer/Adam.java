@@ -80,7 +80,11 @@ public class Adam implements Optimizer{
 		RealVector p = m2a.getRealVector(this.variables.keySet().stream().collect(Collectors.toMap(k->k, k->this.variables.get(k).getCurrentValue())));
 		RealVector g = m2a.getRealVector(gradient);
 		if(g.getNorm()>c*g.getDimension()) {//Clipping
-			g = g.mapDivide(g.getNorm()).mapMultiply(c*g.getDimension());
+			if(!Double.isInfinite(g.getNorm())) {
+				g = g.mapDivide(g.getNorm()).mapMultiply(c*g.getDimension());
+			}else {
+				g = g.mapDivide(g.getL1Norm()).mapMultiply(c*g.getDimension());
+			}
 		}
 		m = m.mapMultiply(this.beta1).add(g.mapMultiply(1-beta1));
 		v = v.mapMultiply(this.beta2).add(g.ebeMultiply(g).mapMultiply(1-this.beta2));

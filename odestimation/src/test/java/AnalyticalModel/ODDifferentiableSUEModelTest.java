@@ -2,7 +2,10 @@ package AnalyticalModel;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -19,6 +22,8 @@ import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
 
+import org.apache.commons.math3.linear.MatrixUtils;
+import org.apache.commons.math3.linear.RealVector;
 import org.junit.jupiter.api.Test;
 import org.matsim.api.core.v01.Id;
 import org.matsim.api.core.v01.Scenario;
@@ -56,6 +61,7 @@ import dynamicTransitRouter.fareCalculators.MTRFareCalculator;
 import dynamicTransitRouter.fareCalculators.UniformFareCalculator;
 import dynamicTransitRouter.fareCalculators.ZonalFareXMLParserV2;
 import optimizer.Adam;
+import optimizer.GD;
 import optimizer.Optimizer;
 import optimizer.VariableDetails;
 import ust.hk.praisehk.metamodelcalibration.calibrator.ObjectiveCalculator;
@@ -135,6 +141,7 @@ class ODDifferentiableSUEModelTest {
 		}
 		Network odNetwork=NetworkUtils.readNetwork("fullHk/odNetwork.xml");
 		for(Entry<String,Tuple<Double,Double>>timeBean:originalMeasurements.getTimeBean().entrySet()) {
+			//if(!timeBean.getKey().equals("18"))continue;
 			Map<String,Tuple<Double,Double>> singleTimeBean = new HashMap<>();
 			singleTimeBean.put(timeBean.getKey(),timeBean.getValue());
 			ODDifferentiableSUEModel model = new ODDifferentiableSUEModel(singleTimeBean, config);
@@ -149,7 +156,8 @@ class ODDifferentiableSUEModelTest {
 			}
 			Map<String,VariableDetails> Param = new HashMap<>();
 			for(String k:uniqueVars)Param.put(k, new VariableDetails(k, new Tuple<Double,Double>(0.1,8.), Math.sqrt(2.0)));
-			Optimizer adam = new Adam("odOptim",Param,0.15,0.9,.999,10e-8);
+			Optimizer adam = new Adam("odOptim",Param,0.1,0.9,.999,10e-6);
+			//Optimizer gd = new GD("odOptim",Param,0.00005,1000);
 			for(int counter = 0;counter<100;counter++) {
 				//System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
 				long t = System.currentTimeMillis();
@@ -159,10 +167,17 @@ class ODDifferentiableSUEModelTest {
 				model.generateRoutesAndOD(scenario.getPopulation(), scenario.getNetwork(), odNetwork, scenario.getTransitSchedule(), scenario, fareCalculators);
 				LinkedHashMap<String,Double> params = new LinkedHashMap<>();
 				Param.values().stream().forEach(v->params.put(v.getVariableName(), v.getCurrentValue()));
+				//params = new LinkedHashMap<>(readParams("seperateODMultiplier/gradAndParam_18_0.csv"));
+//				List<Double> v = new ArrayList<>(params.values());
+//				double[] ppp = new double[params.size()];
+//				for(int i = 0; i<ppp.length; i++)ppp[i] = v.get(i);
+//				RealVector pp = MatrixUtils.createRealVector(ppp);
+//				System.out.println(pp.isInfinite()||pp.isNaN());
 				Measurements modelMeasurements = model.perFormSUE(params, timeSplitMeasurements.get(timeBean.getKey()));
 				Map<String,Double> grad = ODUtils.calcODObjectiveGradient(timeSplitMeasurements.get(timeBean.getKey()), modelMeasurements, model);
 				writeMeasurementsComparison(timeSplitMeasurements.get(timeBean.getKey()),modelMeasurements,counter,"seperateODMultiplier",timeBean.getKey());
 				Param = adam.takeStep(grad);
+				//Param = gd.takeStep(grad);
 				double objective = ObjectiveCalculator.calcObjective(timeSplitMeasurements.get(timeBean.getKey()), modelMeasurements, ObjectiveCalculator.TypeMeasurementAndTimeSpecific);
 				System.out.println("Finished iteration "+counter);
 				System.out.println("Objective = "+objective);
@@ -179,6 +194,26 @@ class ODDifferentiableSUEModelTest {
 		}
 	}
 
+	public static Map<String,Double> readParams(String fileLoc){
+		Map<String,Double> param = new HashMap<>();
+		try {
+			BufferedReader bf  = new BufferedReader(new FileReader(new File(fileLoc)));
+			bf.readLine();
+			String line = null;
+			while((line = bf.readLine())!=null) {
+				String[] part = line.split(",");
+				param.put(part[0], Double.parseDouble(part[1]));
+			}
+			bf.close();
+		} catch (FileNotFoundException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		return param;
+	}
 	
 	private static Map<String,Measurements> timeSplitMeasurements(Measurements m){
 		Map<String,Measurements> mOuts=new HashMap<>();
