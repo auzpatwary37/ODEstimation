@@ -63,7 +63,7 @@ public class GD implements Optimizer{
 			}
 		}
 		
-		RealVector p_new = p.add(g.mapMultiply(this.alpha));
+		RealVector p_new = p.subtract(g.mapMultiply(this.alpha));
 		for(Entry<String,Double> var:m2a.getMap(p_new.toArray()).entrySet()) {
 			Tuple<Double,Double> limit = this.variables.get(var.getKey()).getLimit();
 			if(var.getValue()>limit.getSecond())var.setValue(limit.getSecond());

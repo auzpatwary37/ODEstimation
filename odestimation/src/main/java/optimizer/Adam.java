@@ -90,7 +90,8 @@ public class Adam implements Optimizer{
 		v = v.mapMultiply(this.beta2).add(g.ebeMultiply(g).mapMultiply(1-this.beta2));
 		RealVector m_h = m.mapDivide(1-this.beta1);
 		RealVector v_h = v.mapDivide(1-this.beta2);
-		RealVector p_new = p.add(m_h.mapMultiply(this.alpha).ebeDivide(v_h.map(k->Math.sqrt(k)).mapAdd(this.eta)));
+		//RealVector p_new = p.subtract(m_h.mapMultiply(this.alpha/(1+(counter-1)*0.4)).ebeDivide(v_h.map(k->Math.sqrt(k)).mapAdd(this.eta)));
+		RealVector p_new = p.subtract(m_h.mapMultiply(this.alpha).ebeDivide(v_h.map(k->Math.sqrt(k)).mapAdd(this.eta)));
 		for(Entry<String,Double> var:m2a.getMap(p_new.toArray()).entrySet()) {
 			Tuple<Double,Double> limit = this.variables.get(var.getKey()).getLimit();
 			if(var.getValue()>limit.getSecond())var.setValue(limit.getSecond());

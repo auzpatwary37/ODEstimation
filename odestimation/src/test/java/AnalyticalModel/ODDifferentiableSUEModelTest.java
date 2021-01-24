@@ -15,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Random;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -141,7 +142,7 @@ class ODDifferentiableSUEModelTest {
 		}
 		Network odNetwork=NetworkUtils.readNetwork("fullHk/odNetwork.xml");
 		for(Entry<String,Tuple<Double,Double>>timeBean:originalMeasurements.getTimeBean().entrySet()) {
-			//if(!timeBean.getKey().equals("18"))continue;
+		if(timeBean.getKey().equals("17")||timeBean.getKey().equals("18")||timeBean.getKey().equals("19")||timeBean.getKey().equals("8")||timeBean.getKey().equals("9"))continue;
 			Map<String,Tuple<Double,Double>> singleTimeBean = new HashMap<>();
 			singleTimeBean.put(timeBean.getKey(),timeBean.getValue());
 			ODDifferentiableSUEModel model = new ODDifferentiableSUEModel(singleTimeBean, config);
@@ -156,9 +157,9 @@ class ODDifferentiableSUEModelTest {
 			}
 			Map<String,VariableDetails> Param = new HashMap<>();
 			for(String k:uniqueVars)Param.put(k, new VariableDetails(k, new Tuple<Double,Double>(0.1,8.), Math.sqrt(2.0)));
-			Optimizer adam = new Adam("odOptim",Param,0.1,0.9,.999,10e-6);
+			Optimizer adam = new Adam("odOptim",Param,0.008,0.9,.999,10e-6);
 			//Optimizer gd = new GD("odOptim",Param,0.00005,1000);
-			for(int counter = 0;counter<100;counter++) {
+			for(int counter = 0;counter<1;counter++) {
 				//System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
 				long t = System.currentTimeMillis();
 				singleTimeBean = new HashMap<>();
@@ -179,6 +180,8 @@ class ODDifferentiableSUEModelTest {
 				Param = adam.takeStep(grad);
 				//Param = gd.takeStep(grad);
 				double objective = ObjectiveCalculator.calcObjective(timeSplitMeasurements.get(timeBean.getKey()), modelMeasurements, ObjectiveCalculator.TypeMeasurementAndTimeSpecific);
+				//model = null;
+				//if(counter%10==0)performFireTest(config, scenario, odNetwork, fareCalculators, Param, singleTimeBean, grad, 1, objective, timeSplitMeasurements.get(timeBean.getKey()), "seperateODMultiplier", counter, 0.005);
 				System.out.println("Finished iteration "+counter);
 				System.out.println("Objective = "+objective);
 				final Map<String,VariableDetails> p = new LinkedHashMap<String,VariableDetails>(Param);
@@ -280,6 +283,48 @@ class ODDifferentiableSUEModelTest {
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
+		}
+	}
+	
+	public static void performFireTest(Config config,Scenario scenario, Network odNetwork,Map<String,FareCalculator> fareCalculators, Map<String,VariableDetails> variables, Map<String,Tuple<Double,Double>> timeBean,
+			Map<String,Double> currentGradient, int numberOfVariableToTest, double currentObj, Measurements originalMeasurements, String reportFileLoc, int counter,double c) {
+		
+		try {
+		
+			FileWriter fw = new FileWriter(new File(reportFileLoc+"/gradientFireTest"+counter+".csv"));
+			fw.append("counter,gradKey,currentGrad,newGrad\n");//header
+			//Arbitrarily pick up #numberOfVariableToTest number of variables for testing
+			Random rnd = new Random();
+			List<String> keyList = new ArrayList<>(currentGradient.keySet());
+			Set<String> currentKeyList = new HashSet<>();
+			for(int i=0;i<numberOfVariableToTest;i++) {
+				boolean stop = false; 
+				String key = null;
+				while (stop) {
+					key = keyList.get(rnd.nextInt(keyList.size()));
+					if(!currentKeyList.contains(key) && currentGradient.get(key)!=0) {
+						currentKeyList.add(key);
+						stop = true;
+					}
+				}
+				//start the test. We do forward difference.
+				LinkedHashMap<String,Double> vars = new LinkedHashMap<>();
+				variables.entrySet().stream().forEach(e->{
+					vars.put(e.getKey(), e.getValue().getCurrentValue());
+				});
+				vars.put(key, vars.get(key)+c);
+				ODDifferentiableSUEModel model = new ODDifferentiableSUEModel(timeBean, config);
+				model.generateRoutesAndOD(scenario.getPopulation(), scenario.getNetwork(), odNetwork, scenario.getTransitSchedule(), scenario, fareCalculators);
+				Measurements modelMeasurements = model.perFormSUE(vars, originalMeasurements,false);
+				double newObj = ObjectiveCalculator.calcObjective(originalMeasurements, modelMeasurements, ObjectiveCalculator.TypeMeasurementAndTimeSpecific);
+				double gradNew = 0.5*(newObj-currentObj)/c;
+				fw.append(counter+","+key+","+currentGradient.get(key)+","+gradNew+"\n");
+				fw.flush();
+			}
+			fw.close();
+		} catch (IOException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
 		}
 	}
 }

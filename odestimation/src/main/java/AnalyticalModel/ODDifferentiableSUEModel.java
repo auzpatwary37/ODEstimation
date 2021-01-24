@@ -451,10 +451,74 @@ public Measurements perFormSUE(LinkedHashMap<String, Double> params,Measurements
 	return this.performAssignment(params, this.AnalyticalModelInternalParams,originalMeasurements);
 }
 
+public Measurements perFormSUE(LinkedHashMap<String, Double> params,Measurements originalMeasurements,boolean calcGrad) {
+	this.Demand = ODUtils.applyODPairMultiplier(this.Demand, params,this.odPairs.getODpairset());
+	for(String timeBeanId:this.timeBeans.keySet()) {
+		this.consecutiveSUEErrorIncrease.put(timeBeanId, 0.);
+		//this.Demand.put(timeBeanId, new HashMap<>(this.odPairs.getdemand(timeBeanId)));
+		for(Id<AnalyticalModelODpair> odId:this.Demand.get(timeBeanId).keySet()) {
+			double totalDemand=this.Demand.get(timeBeanId).get(odId);
+			AnalyticalModelODpair odpair = this.odPairs.getODpairset().get(odId);
+			this.carDemand.get(timeBeanId).put(odId, 0.5*totalDemand);
+			
+			if(odpair.getSubPopulation().contains("GV")) {
+				this.carDemand.get(timeBeanId).put(odId, totalDemand); 
+			}
+			//System.out.println();
+		}
+		
+	}
+	return this.performAssignment(params, this.AnalyticalModelInternalParams,originalMeasurements,calcGrad);
+}
+
 private Measurements performAssignment(LinkedHashMap<String,Double> params, LinkedHashMap<String,Double> anaParams, Measurements originalMeasurements) {
 	Measurements measurementsToUpdate = null;
 	
 	SUEModelOutput flow = this.performAssignment(params, anaParams);
+	
+	if(originalMeasurements==null) {//for now we just add the fare link and link volume for a null measurements
+		this.emptyMeasurements=true;
+		measurementsToUpdate=Measurements.createMeasurements(this.timeBeans);
+		//create and insert link volume measurement
+		for(Entry<String, Map<Id<Link>, Double>> timeFlow:flow.getLinkVolume().entrySet()) {
+			for(Entry<Id<Link>, Double> link:timeFlow.getValue().entrySet()) {
+				Id<Measurement> mid = Id.create(link.getKey().toString(), Measurement.class);
+				if(measurementsToUpdate.getMeasurements().containsKey(mid)) {
+					measurementsToUpdate.getMeasurements().get(mid).putVolume(timeFlow.getKey(), link.getValue());
+				}else {
+					measurementsToUpdate.createAnadAddMeasurement(mid.toString(), MeasurementType.linkVolume);
+					List<Id<Link>> links = new ArrayList<>();
+					links.add(link.getKey());
+					measurementsToUpdate.getMeasurements().get(mid).setAttribute(Measurement.linkListAttributeName, links);
+					measurementsToUpdate.getMeasurements().get(mid).putVolume(timeFlow.getKey(), link.getValue());
+				}
+			}
+		}
+		
+		for(Entry<String, Map<String, Double>> timeFlow:flow.getFareLinkVolume().entrySet()) {
+			for(Entry<String, Double> link:timeFlow.getValue().entrySet()) {
+				Id<Measurement> mid = Id.create(link.getKey().toString(), Measurement.class);
+				if(measurementsToUpdate.getMeasurements().containsKey(mid)) {
+					measurementsToUpdate.getMeasurements().get(mid).putVolume(timeFlow.getKey(), link.getValue());
+				}else {
+					measurementsToUpdate.createAnadAddMeasurement(mid.toString(), MeasurementType.fareLinkVolume);
+					measurementsToUpdate.getMeasurements().get(mid).setAttribute(Measurement.FareLinkAttributeName, new FareLink(link.getKey()));
+					measurementsToUpdate.getMeasurements().get(mid).putVolume(timeFlow.getKey(), link.getValue());
+				}
+			}
+		}
+	}else {
+		measurementsToUpdate=originalMeasurements.clone();
+		measurementsToUpdate.resetMeasurements();
+		measurementsToUpdate.updateMeasurements(flow, null, null);
+	}
+	return measurementsToUpdate;
+}
+
+private Measurements performAssignment(LinkedHashMap<String,Double> params, LinkedHashMap<String,Double> anaParams, Measurements originalMeasurements,boolean calcGrad) {
+	Measurements measurementsToUpdate = null;
+	
+	SUEModelOutput flow = this.performAssignment(params, anaParams,calcGrad);
 	
 	if(originalMeasurements==null) {//for now we just add the fare link and link volume for a null measurements
 		this.emptyMeasurements=true;
@@ -500,6 +564,21 @@ private SUEModelOutput performAssignment( LinkedHashMap<String,Double> params, L
 	//this.resetCarDemand();
 	for(String timeId:this.timeBeans.keySet()) {
 		SUEModelOutput flowOut = this.singleTimeBeanTA(params, anaParams, timeId);
+		
+		flow.getLinkVolume().putAll(flowOut.getLinkVolume());
+		flow.getLinkTravelTime().putAll(flowOut.getLinkTravelTime());
+		flow.getLinkTransitVolume().putAll(flowOut.getLinkTransitVolume());
+		flow.getTrLinkTravelTime().putAll(flowOut.getTrLinkTravelTime());
+		flow.getFareLinkVolume().putAll(flowOut.getFareLinkVolume());
+	}
+	return flow;
+}
+
+private SUEModelOutput performAssignment( LinkedHashMap<String,Double> params, LinkedHashMap<String,Double> anaParams,boolean calcGradient) {
+	SUEModelOutput flow = new SUEModelOutput(new HashMap<>(),new HashMap<>(),new HashMap<>(),new HashMap<>(),new HashMap<>());
+	//this.resetCarDemand();
+	for(String timeId:this.timeBeans.keySet()) {
+		SUEModelOutput flowOut = this.singleTimeBeanTA(params, anaParams, timeId,calcGradient);
 		
 		flow.getLinkVolume().putAll(flowOut.getLinkVolume());
 		flow.getLinkTravelTime().putAll(flowOut.getLinkTravelTime());
@@ -599,6 +678,96 @@ public SUEModelOutput singleTimeBeanTA(LinkedHashMap<String, Double> params,Link
 	
 }
 
+public SUEModelOutput singleTimeBeanTA(LinkedHashMap<String, Double> params,LinkedHashMap<String,Double> anaParams,String timeBeanId, boolean calcGrad) {
+	Map<Id<TransitLink>, Double> linkTransitVolume =null;
+	Map<Id<Link>,Double> linkCarVolume = null;
+	Map<String,Map<String,Double>> fareLinkVolume = new HashMap<>();
+	fareLinkVolume.put(timeBeanId, new HashMap<>());
+	boolean shouldStop=false;
+//	boolean firstTimeGradCalc = true;
+	for(int i=1;i<70;i++) {
+		//for(this.car)
+		//ConcurrentHashMap<String,HashMap<Id<CNLODpair>,Double>>demand=this.Demand;
+		linkCarVolume=this.performCarNetworkLoading(timeBeanId,i,params,anaParams);
+		linkTransitVolume=this.performTransitNetworkLoading(timeBeanId,i,params,anaParams);
+		System.out.println("Finished network loading.");
+		//System.out.println("GB: " + (double) (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024*1024*1024));
+		shouldStop=this.CheckConvergence(linkCarVolume, linkTransitVolume, this.tollerance, timeBeanId,i);
+		///the beta should already be calculated by this line. 
+//		double updateRatio = 1/this.beta.get(timeBeanId).get(i-1);
+//		if(updateRatio>0.20 || i<20) {
+//		//	if(firstTimeGradCalc) {
+//				this.caclulateGradient(timeBeanId, i, params, anaParams,true);
+//				firstTimeGradCalc = false;
+//			}else {
+		if(calcGrad) {
+			this.caclulateGradient(timeBeanId, i, params, anaParams);
+		}
+		//	}
+//		}
+		System.out.println("Finished gradient Calculation");
+		
+		this.UpdateLinkVolume(linkCarVolume, linkTransitVolume, i, timeBeanId);
+		if(i==1 && shouldStop==true) {
+			boolean demandEmpty=true;
+			for(AnalyticalModelODpair od:this.odPairs.getODpairset().values()) {
+				if(od.getDemand().get(timeBeanId)!=0) {
+					demandEmpty=false;
+					break;
+				}
+			}
+			if(!demandEmpty) {
+				System.out.println("The model cannot converge on first iteration!!!");
+			}
+		}
+		
+		if(shouldStop) {
+//			//collect travel time
+//			if(this.measurementsToUpdate!=null) {
+//				List<Measurement>ms= this.measurementsToUpdate.getMeasurementsByType().get(MeasurementType.linkTravelTime);
+//				for(Measurement m:ms) {
+//					if(m.getVolumes().containsKey(timeBeanId)) {
+//						m.putVolume(timeBeanId, ((CNLLink)this.networks.get(timeBeanId).getLinks().get(((ArrayList<Id<Link>>)m.getAttribute(Measurement.linkListAttributeName)).get(0))).getLinkTravelTime(this.timeBeans.get(timeBeanId),
+//						params, anaParams));
+//					}
+//				}
+//			}
+//			//collect travel time for transit
+//			for(TransitLink link:this.transitLinks.get(timeBeanId).values()) {
+//				if(link instanceof TransitDirectLink) {
+//					this.outputTrLinkTT.get(timeBeanId).put(link.getTrLinkId(), 
+//							((TransitDirectLink)link).getLinkTravelTime(this.networks.get(timeBeanId),this.timeBeans.get(timeBeanId),
+//									params, anaParams));
+//				}else {
+//					this.outputTrLinkTT.get(timeBeanId).put(link.getTrLinkId(), 
+//							((TransitTransferLink)link).getWaitingTime(anaParams,this.networks.get(timeBeanId)));
+//				}
+//				
+//			}
+			this.fareLinkincidenceMatrix.get(timeBeanId).entrySet().stream().forEach(fl->{
+				double flow = 0;
+				for(Id<AnalyticalModelTransitRoute> trRoute:fl.getValue()){
+					flow+=this.trRouteFlow.get(timeBeanId).get(trRoute);
+				}
+				fareLinkVolume.get(timeBeanId).put(fl.getKey(),flow);
+			});
+			this.scaleBackGradients();
+			break;
+			
+			}
+		this.performModalSplit(params, anaParams, timeBeanId);
+		
+		
+	}
+	Map<String,Map<Id<Link>,Double>>linkVolume = new HashMap<>();
+	linkVolume.put(timeBeanId, linkCarVolume);
+	
+	Map<String,Map<Id<TransitLink>,Double>>linkTrVolume = new HashMap<>();
+	linkTrVolume.put(timeBeanId, linkTransitVolume);
+	SUEModelOutput flow = new SUEModelOutput(linkVolume, linkTrVolume, outputLinkTT, outputTrLinkTT, fareLinkVolume);
+	return flow;
+	
+}
 protected HashMap<Id<Link>,Double> NetworkLoadingCarSingleOD(Id<AnalyticalModelODpair> ODpairId,String timeBeanId,double counter,LinkedHashMap<String,Double> oparams, LinkedHashMap<String, Double> anaParams){
 	
 	AnalyticalModelODpair odpair=this.odPairs.getODpairset().get(ODpairId);
